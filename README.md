@@ -1,4 +1,6 @@
 # Frackture
+![PyPI](https://img.shields.io/pypi/v/frackture)
+![Downloads](https://img.shields.io/pypi/dm/frackture)
 
 A universal symbolic compression system that uses recursive logic and entropy signatures to compress data while preserving identity and structure.
 
