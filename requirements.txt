@@ -1,0 +1,4 @@
+# pip install requirements
+numpy
+scipy
+scikit-learn
