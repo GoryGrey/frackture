@@ -29,13 +29,14 @@ def frackture_preprocess_universal_v2_6(data):
 def frackture_symbolic_fingerprint_f_infinity(input_vector, passes=4):
     bits = (input_vector * 255).astype(np.uint8)
     mask = np.array([(i**2 + i*3 + 1) % 256 for i in range(len(bits))], dtype=np.uint8)
+    fingerprint = ''
     for p in range(passes):
         rotated = np.roll(bits ^ mask, p * 17)
-        entropy_mixed = (rotated * ((p + 1) ** 2)) % 256
+        entropy_mixed = ((rotated.astype(np.uint16) * ((p + 1) ** 2)) % 256).astype(np.uint8)
         chunks = np.array_split(entropy_mixed, 32)
         folded = [np.bitwise_xor.reduce(chunk) for chunk in chunks]
         fingerprint = ''.join(f"{x:02x}" for x in folded)
-        bits = (entropy_mixed + folded[p % len(folded)]) % 256
+        bits = ((entropy_mixed.astype(np.uint16) + folded[p % len(folded)]) % 256).astype(np.uint8)
     return fingerprint
 
 def symbolic_channel_encode(input_vector):
@@ -48,9 +49,11 @@ def symbolic_channel_decode(symbolic_hash):
 ### === Entropy Channel System === ###
 def entropy_channel_encode(input_vector):
     fft_vector = np.abs(fft(input_vector))
+    reshaped = fft_vector.reshape(48, 16)
     pca = PCA(n_components=16)
-    reduced = pca.fit_transform(fft_vector.reshape(1, -1)).flatten()
-    return reduced.tolist()
+    reduced = pca.fit_transform(reshaped).flatten()
+    downsampled = reduced[::3][:16]
+    return downsampled.tolist()
 
 def entropy_channel_decode(entropy_data):
     ent = np.array(entropy_data)
