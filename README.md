@@ -60,6 +60,27 @@ print(original)  # should match original input
 
 ---
 
+## 📊 Benchmarks
+
+Want to see how Frackture compares to gzip and brotli? Check out the comprehensive benchmark suite:
+
+```bash
+cd benchmarks
+python benchmark_frackture.py
+```
+
+The benchmark suite tests compression ratio, throughput, hashing latency, and memory usage across various datasets (text, JSON, binary, random noise, etc.).
+
+See [benchmarks/README.md](benchmarks/README.md) for detailed instructions and how to interpret results.
+
+**Key highlights:**
+- Fixed ~96-byte output regardless of input size
+- 250-500x compression ratios for fingerprinting use cases
+- Fast hashing for integrity checks
+- Consistent memory footprint
+
+---
+
 ## 🤖 Author
 
 Built by [@GoryGrey](https://x.com/GoryGrey) — degen dev with a compression disorder.  
