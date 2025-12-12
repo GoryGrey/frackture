@@ -490,15 +490,37 @@ See [TEST_REPORT.md](./TEST_REPORT.md) for detailed test results.
 
 ## 📊 Benchmarks
 
-Compare Frackture against gzip and brotli:
+Compare Frackture against gzip and brotli using real-world datasets:
 
 ```bash
 cd benchmarks
+
+# Run with real datasets (default)
 python benchmark_frackture.py
 
 # Run specific dataset sizes
 python benchmark_frackture.py --small-only  # 100KB datasets
 python benchmark_frackture.py --large-only  # 1MB datasets
+
+# Use synthetic datasets (legacy mode)
+python benchmark_frackture.py --synthetic
+```
+
+**Real Dataset Repository:**
+
+Benchmarks now use curated, redistribution-safe samples covering:
+- 📄 **Text**: plain text, logs, JSON, CSV
+- 🖼️ **Binary**: PNG, JPEG, PDF, GIF
+- 💾 **Structured**: SQLite, pickle, MessagePack
+- 🔧 **Code**: JavaScript, Python, minified code
+- 🔀 **Mixed**: multi-format payloads
+
+Explore datasets:
+```bash
+cd benchmarks
+python dataset_cli.py list         # List all datasets
+python dataset_cli.py categories   # Show by category
+python dataset_cli.py test         # Validate all datasets
 ```
 
 **Sample Results (1MB text):**
@@ -515,7 +537,7 @@ python benchmark_frackture.py --large-only  # 1MB datasets
 - ⚡ Frackture: 7x faster encoding, 15x faster decoding (large files)
 - 🧬 Frackture: Consistent performance on all data types (even random noise)
 
-See [BENCHMARK_SUITE_SUMMARY.md](./BENCHMARK_SUITE_SUMMARY.md) and [benchmarks/README.md](./benchmarks/README.md) for comprehensive results.
+See [BENCHMARK_SUITE_SUMMARY.md](./BENCHMARK_SUITE_SUMMARY.md), [benchmarks/README.md](./benchmarks/README.md), and [benchmarks/datasets/README.md](./benchmarks/datasets/README.md) for comprehensive results.
 
 ---
 

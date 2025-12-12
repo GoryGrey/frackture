@@ -1,0 +1,310 @@
+# Frackture Dataset Manifest
+# Describes all available datasets, their properties, and scaling rules
+#
+# Size tiers:
+#   - tiny: < 100 B
+#   - small: ~1 KB
+#   - medium: ~100 KB
+#   - large: ~1 MB
+#   - xlarge: ~10 MB
+#   - xxlarge: ~100 MB
+#   - huge: 1 GB+ (optional, may be skipped)
+
+version: "1.0"
+description: "Redistribution-safe sample datasets for Frackture benchmarking"
+
+datasets:
+  # ========== TEXT DATASETS ==========
+  
+  text_plain:
+    category: text
+    subcategory: plain
+    file: sample_text.txt
+    canonical_size: 596  # bytes
+    description: "Natural language text (prose/documentation)"
+    compressibility: high
+    scaling:
+      method: repeat
+      min_size: 50
+      max_size: 100_000_000
+    
+  text_log:
+    category: text
+    subcategory: log
+    file: sample_log.log
+    canonical_size: 625
+    description: "Structured log file entries"
+    compressibility: high
+    scaling:
+      method: repeat
+      min_size: 50
+      max_size: 100_000_000
+  
+  text_json:
+    category: text
+    subcategory: json
+    file: sample_data.json
+    canonical_size: 814
+    description: "Structured JSON data"
+    compressibility: high
+    scaling:
+      method: repeat
+      min_size: 50
+      max_size: 100_000_000
+  
+  text_csv:
+    category: text
+    subcategory: csv
+    file: sample_data.csv
+    canonical_size: 222
+    description: "Comma-separated values table"
+    compressibility: high
+    scaling:
+      method: repeat
+      min_size: 50
+      max_size: 100_000_000
+  
+  # ========== BINARY DATASETS ==========
+  
+  binary_png:
+    category: binary
+    subcategory: image
+    file: sample_image.png
+    canonical_size: 69
+    description: "PNG image (1x1 red pixel)"
+    compressibility: low
+    scaling:
+      method: repeat
+      min_size: 35
+      max_size: 10_000_000
+  
+  binary_jpeg:
+    category: binary
+    subcategory: image
+    file: sample_image.jpg
+    canonical_size: 138
+    description: "JPEG image (minimal valid JPEG)"
+    compressibility: low
+    scaling:
+      method: repeat
+      min_size: 35
+      max_size: 10_000_000
+  
+  binary_pdf:
+    category: binary
+    subcategory: document
+    file: sample_document.pdf
+    canonical_size: 457
+    description: "PDF document (minimal valid PDF)"
+    compressibility: medium
+    scaling:
+      method: repeat
+      min_size: 35
+      max_size: 10_000_000
+  
+  binary_gif:
+    category: binary
+    subcategory: animation
+    file: sample_animation.gif
+    canonical_size: 43
+    description: "GIF animation (1x1 transparent pixel)"
+    compressibility: low
+    scaling:
+      method: repeat
+      min_size: 35
+      max_size: 10_000_000
+  
+  # ========== STRUCTURED DATASETS ==========
+  
+  structured_sqlite:
+    category: structured
+    subcategory: database
+    file: sample_database.db
+    canonical_size: 12288  # SQLite page size aligned
+    description: "SQLite database with tables and data"
+    compressibility: medium
+    scaling:
+      method: repeat
+      min_size: 1000
+      max_size: 100_000_000
+  
+  structured_pickle:
+    category: structured
+    subcategory: serialized
+    file: sample_pickle.pkl
+    canonical_size: 161
+    description: "Python pickle serialized object"
+    compressibility: medium
+    scaling:
+      method: repeat
+      min_size: 35
+      max_size: 10_000_000
+  
+  structured_msgpack:
+    category: structured
+    subcategory: serialized
+    file: sample_msgpack.msgpack
+    canonical_size: 85
+    description: "MessagePack serialized data"
+    compressibility: medium
+    scaling:
+      method: repeat
+      min_size: 35
+      max_size: 10_000_000
+    optional: true  # May not exist if msgpack not installed
+  
+  # ========== CODE DATASETS ==========
+  
+  code_javascript:
+    category: code
+    subcategory: javascript
+    file: sample_code.js
+    canonical_size: 563
+    description: "JavaScript source code"
+    compressibility: high
+    scaling:
+      method: repeat
+      min_size: 50
+      max_size: 100_000_000
+  
+  code_javascript_minified:
+    category: code
+    subcategory: javascript_minified
+    file: sample_minified.min.js
+    canonical_size: 223
+    description: "Minified JavaScript code"
+    compressibility: medium
+    scaling:
+      method: repeat
+      min_size: 50
+      max_size: 100_000_000
+  
+  code_python:
+    category: code
+    subcategory: python
+    file: sample_module.py
+    canonical_size: 1206
+    description: "Python source module"
+    compressibility: high
+    scaling:
+      method: repeat
+      min_size: 50
+      max_size: 100_000_000
+  
+  # ========== MIXED PAYLOADS ==========
+  
+  mixed_payload:
+    category: mixed
+    subcategory: bundle
+    file: sample_mixed.bin
+    canonical_size: 1878
+    description: "Mixed payload combining text, JSON, binary, and code"
+    compressibility: medium
+    scaling:
+      method: repeat
+      min_size: 100
+      max_size: 100_000_000
+
+# Predefined mixed combinations for advanced testing
+mixed_combinations:
+  text_heavy:
+    description: "Mix of text formats (70% text, 30% other)"
+    components:
+      - dataset: text_plain
+        weight: 40
+      - dataset: text_json
+        weight: 20
+      - dataset: text_log
+        weight: 10
+      - dataset: code_python
+        weight: 20
+      - dataset: binary_pdf
+        weight: 10
+  
+  binary_heavy:
+    description: "Mix of binary formats (70% binary, 30% other)"
+    components:
+      - dataset: binary_png
+        weight: 30
+      - dataset: binary_jpeg
+        weight: 25
+      - dataset: binary_pdf
+        weight: 15
+      - dataset: text_json
+        weight: 20
+      - dataset: code_javascript
+        weight: 10
+  
+  code_heavy:
+    description: "Mix of code formats with metadata"
+    components:
+      - dataset: code_python
+        weight: 35
+      - dataset: code_javascript
+        weight: 30
+      - dataset: code_javascript_minified
+        weight: 15
+      - dataset: text_json
+        weight: 10
+      - dataset: text_log
+        weight: 10
+  
+  structured_heavy:
+    description: "Mix of structured data formats"
+    components:
+      - dataset: structured_sqlite
+        weight: 40
+      - dataset: text_json
+        weight: 25
+      - dataset: text_csv
+        weight: 15
+      - dataset: structured_pickle
+        weight: 20
+  
+  balanced:
+    description: "Balanced mix of all categories"
+    components:
+      - dataset: text_plain
+        weight: 15
+      - dataset: text_json
+        weight: 15
+      - dataset: binary_png
+        weight: 15
+      - dataset: code_python
+        weight: 15
+      - dataset: structured_pickle
+        weight: 15
+      - dataset: mixed_payload
+        weight: 25
+
+# Size tier definitions (in bytes)
+size_tiers:
+  tiny:
+    min: 1
+    max: 99
+    target: 50
+  small:
+    min: 100
+    max: 10_000
+    target: 1024
+  medium:
+    min: 10_001
+    max: 500_000
+    target: 102400
+  large:
+    min: 500_001
+    max: 5_000_000
+    target: 1048576
+  xlarge:
+    min: 5_000_001
+    max: 50_000_000
+    target: 10485760
+  xxlarge:
+    min: 50_000_001
+    max: 500_000_000
+    target: 104857600
+  huge:
+    min: 500_000_001
+    max: 10_000_000_000
+    target: 1073741824
+    optional: true

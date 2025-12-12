@@ -21,6 +21,14 @@ import string
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Import dataset repository
+try:
+    from dataset_repository import DatasetRepository
+    HAS_DATASET_REPO = True
+except ImportError:
+    HAS_DATASET_REPO = False
+    print("Warning: DatasetRepository not available, using legacy DatasetGenerator")
+
 # Import Frackture - note the module name has spaces
 import importlib.util
 spec = importlib.util.spec_from_file_location("frackture", str(Path(__file__).parent.parent / "frackture (2).py"))
@@ -591,7 +599,8 @@ class ResultFormatter:
 def run_benchmark_suite(
     small_datasets: bool = True,
     large_datasets: bool = True,
-    output_dir: Path = None
+    output_dir: Path = None,
+    use_real_datasets: bool = None
 ):
     """Run the complete benchmark suite"""
     
@@ -600,19 +609,48 @@ def run_benchmark_suite(
     
     output_dir.mkdir(parents=True, exist_ok=True)
     
+    # Auto-detect if we should use real datasets
+    if use_real_datasets is None:
+        use_real_datasets = HAS_DATASET_REPO
+    elif use_real_datasets and not HAS_DATASET_REPO:
+        print("Warning: Real datasets requested but DatasetRepository not available")
+        use_real_datasets = False
+    
     print("\n" + "="*100)
     print("🔥 FRACKTURE BENCHMARK SUITE 🔥")
     print("="*100)
     print(f"\nOutput directory: {output_dir}")
+    print(f"Dataset mode: {'REAL DATASETS' if use_real_datasets else 'SYNTHETIC DATASETS'}")
     print(f"Brotli available: {HAS_BROTLI}")
     print(f"Psutil available: {HAS_PSUTIL}")
     
     all_results = {}
     
+    # Initialize dataset repository if using real datasets
+    repo = None
+    if use_real_datasets:
+        try:
+            repo = DatasetRepository()
+            print(f"✓ Loaded {len(repo.list_datasets())} real datasets from manifest")
+        except Exception as e:
+            print(f"✗ Failed to load DatasetRepository: {e}")
+            print("  Falling back to synthetic datasets")
+            use_real_datasets = False
+    
     # Run benchmarks on small datasets
     if small_datasets:
         print("\n📊 Running benchmarks on small datasets (100KB)...")
-        datasets = DatasetGenerator.get_all_datasets(small=True)
+        
+        if use_real_datasets:
+            # Get all real datasets at medium tier (100KB)
+            try:
+                datasets = repo.get_all_datasets(tier='medium', skip_optional=True)
+                print(f"  Loaded {len(datasets)} real dataset samples")
+            except Exception as e:
+                print(f"  Error loading real datasets: {e}")
+                datasets = DatasetGenerator.get_all_datasets(small=True)
+        else:
+            datasets = DatasetGenerator.get_all_datasets(small=True)
         
         for dataset_name, data in datasets.items():
             print(f"\n🔍 Benchmarking dataset: {dataset_name}")
@@ -643,7 +681,17 @@ def run_benchmark_suite(
     # Run benchmarks on large datasets
     if large_datasets:
         print("\n📊 Running benchmarks on large datasets (1MB)...")
-        datasets = DatasetGenerator.get_all_datasets(small=False)
+        
+        if use_real_datasets:
+            # Get all real datasets at large tier (1MB)
+            try:
+                datasets = repo.get_all_datasets(tier='large', skip_optional=True)
+                print(f"  Loaded {len(datasets)} real dataset samples")
+            except Exception as e:
+                print(f"  Error loading real datasets: {e}")
+                datasets = DatasetGenerator.get_all_datasets(small=False)
+        else:
+            datasets = DatasetGenerator.get_all_datasets(small=False)
         
         for dataset_name, data in datasets.items():
             print(f"\n🔍 Benchmarking dataset: {dataset_name}")
@@ -708,14 +756,32 @@ if __name__ == "__main__":
         default=None,
         help="Output directory for results (default: benchmarks/results)"
     )
+    parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="Use synthetic datasets instead of real samples (legacy mode)"
+    )
+    parser.add_argument(
+        "--real",
+        action="store_true",
+        help="Use real dataset samples (default if available)"
+    )
     
     args = parser.parse_args()
     
     small = not args.large_only
     large = not args.small_only
     
+    # Determine dataset mode
+    use_real = None  # Auto-detect
+    if args.synthetic:
+        use_real = False
+    elif args.real:
+        use_real = True
+    
     run_benchmark_suite(
         small_datasets=small,
         large_datasets=large,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        use_real_datasets=use_real
     )
