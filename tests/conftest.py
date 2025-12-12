@@ -12,12 +12,17 @@ import importlib.util
 
 # Add the parent directory to sys.path so we can import the main module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-# Import the main module (handling the space in filename)
-module_path = os.path.join(os.path.dirname(__file__), '..', 'frackture (2).py')
-spec = importlib.util.spec_from_file_location("frackture_2", module_path)
-frackture_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(frackture_module)
+# Import the main module - try new package structure first, fall back to old
+try:
+    import frackture as frackture_module
+except ImportError:
+    # Fall back to old module with space in filename
+    module_path = os.path.join(os.path.dirname(__file__), '..', 'frackture (2).py')
+    spec = importlib.util.spec_from_file_location("frackture_2", module_path)
+    frackture_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(frackture_module)
 
 # Expose all functions from the module
 globals().update({name: getattr(frackture_module, name) for name in dir(frackture_module) if not name.startswith('_')})

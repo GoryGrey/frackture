@@ -27,6 +27,7 @@ MANIFEST
 venv/
 ENV/
 env/
+.venv/
 .venv
 
 # Testing
@@ -61,3 +62,7 @@ benchmarks/results/*.md
 *.egg-info/
 dist/
 build/
+src/frackture/_version.py
+
+# Ruff cache
+.ruff_cache/

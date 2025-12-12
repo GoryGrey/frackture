@@ -20,18 +20,28 @@ import string
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-# Import Frackture - note the module name has spaces
-import importlib.util
-spec = importlib.util.spec_from_file_location("frackture", str(Path(__file__).parent.parent / "frackture (2).py"))
-frackture_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(frackture_module)
-
-frackture_preprocess_universal_v2_6 = frackture_module.frackture_preprocess_universal_v2_6
-frackture_v3_3_safe = frackture_module.frackture_v3_3_safe
-frackture_v3_3_reconstruct = frackture_module.frackture_v3_3_reconstruct
-frackture_deterministic_hash = frackture_module.frackture_deterministic_hash
-optimize_frackture = frackture_module.optimize_frackture
+# Import Frackture - try new package structure first, fall back to old
+try:
+    import frackture
+    frackture_preprocess_universal_v2_6 = frackture.frackture_preprocess_universal_v2_6
+    frackture_v3_3_safe = frackture.frackture_v3_3_safe
+    frackture_v3_3_reconstruct = frackture.frackture_v3_3_reconstruct
+    frackture_deterministic_hash = frackture.frackture_deterministic_hash
+    optimize_frackture = frackture.optimize_frackture
+except ImportError:
+    # Fall back to old module with spaces in name
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("frackture", str(Path(__file__).parent.parent / "frackture (2).py"))
+    frackture_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(frackture_module)
+    
+    frackture_preprocess_universal_v2_6 = frackture_module.frackture_preprocess_universal_v2_6
+    frackture_v3_3_safe = frackture_module.frackture_v3_3_safe
+    frackture_v3_3_reconstruct = frackture_module.frackture_v3_3_reconstruct
+    frackture_deterministic_hash = frackture_module.frackture_deterministic_hash
+    optimize_frackture = frackture_module.optimize_frackture
 
 # Try to import brotli
 try:
@@ -703,6 +713,11 @@ if __name__ == "__main__":
         help="Run only large dataset benchmarks (1MB)"
     )
     parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Quick smoke test (small datasets only, alias for --small-only)"
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -710,6 +725,10 @@ if __name__ == "__main__":
     )
     
     args = parser.parse_args()
+    
+    # Quick mode is an alias for small-only
+    if args.quick:
+        args.small_only = True
     
     small = not args.large_only
     large = not args.small_only
