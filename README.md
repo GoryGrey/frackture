@@ -60,6 +60,69 @@ print(original)  # should match original input
 
 ---
 
+## 🧪 Development & Testing
+
+Frackture includes a comprehensive test suite with ≥85% code coverage.
+
+### Running Tests
+
+Install development dependencies:
+```bash
+pip install -e ".[dev]"
+# or
+pip install pytest pytest-cov
+```
+
+Run all tests:
+```bash
+pytest
+```
+
+Run tests with coverage report:
+```bash
+pytest --cov=. --cov-report=term-missing --cov-report=html
+```
+
+Run specific test categories:
+```bash
+# Unit tests only
+pytest -m unit
+
+# Integration tests only
+pytest -m integration
+
+# Edge case tests only
+pytest -m edge
+```
+
+Run tests for a specific module:
+```bash
+pytest tests/test_preprocessing.py
+pytest tests/test_symbolic_fingerprint.py
+pytest tests/test_entropy_channel.py
+pytest tests/test_integration.py
+pytest tests/test_optimizer.py
+```
+
+### Test Coverage
+
+The test suite covers:
+- ✅ Universal preprocessing for all input types (text, bytes, dicts, NumPy arrays)
+- ✅ Deterministic symbolic fingerprinting
+- ✅ Encode/decode round-trips
+- ✅ Entropy channel behavior
+- ✅ Error handling for invalid payloads
+- ✅ Optimizer MSE reduction
+- ✅ Edge cases (empty inputs, large inputs, malformed data)
+
+View detailed coverage report:
+```bash
+pytest --cov=. --cov-report=html
+open htmlcov/index.html
+```
+
+---
+
 ## 🤖 Author
 
 Built by [@GoryGrey](https://x.com/GoryGrey) — degen dev with a compression disorder.  
