@@ -2,3 +2,6 @@
 numpy
 scipy
 scikit-learn
+pytest
+pytest-cov
+hypothesis
