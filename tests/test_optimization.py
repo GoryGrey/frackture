@@ -6,6 +6,51 @@ import numpy as np
 from hypothesis import given, settings, assume
 from hypothesis.strategies import text, binary, integers, floats, lists
 from conftest import arbitrary_data
+import sys
+import os
+
+
+# Add parent directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+# Import frackture module
+try:
+    from frackture import (
+        frackture_preprocess_universal_v2_6,
+        frackture_v3_3_safe,
+        frackture_v3_3_reconstruct,
+        frackture_encrypt_payload,
+        frackture_decrypt_payload,
+        frackture_deterministic_hash,
+        optimize_frackture,
+        frackture_symbolic_fingerprint_f_infinity,
+        symbolic_channel_encode,
+        symbolic_channel_decode,
+        entropy_channel_encode,
+        entropy_channel_decode,
+        merge_reconstruction
+    )
+except ImportError:
+    import importlib.util
+    module_path = os.path.join(os.path.dirname(__file__), '..', 'frackture (2).py')
+    spec = importlib.util.spec_from_file_location("frackture_2", module_path)
+    frackture_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(frackture_module)
+    
+    frackture_preprocess_universal_v2_6 = frackture_module.frackture_preprocess_universal_v2_6
+    frackture_v3_3_safe = frackture_module.frackture_v3_3_safe
+    frackture_v3_3_reconstruct = frackture_module.frackture_v3_3_reconstruct
+    frackture_encrypt_payload = frackture_module.frackture_encrypt_payload
+    frackture_decrypt_payload = frackture_module.frackture_decrypt_payload
+    frackture_deterministic_hash = frackture_module.frackture_deterministic_hash
+    optimize_frackture = frackture_module.optimize_frackture
+    frackture_symbolic_fingerprint_f_infinity = frackture_module.frackture_symbolic_fingerprint_f_infinity
+    symbolic_channel_encode = frackture_module.symbolic_channel_encode
+    symbolic_channel_decode = frackture_module.symbolic_channel_decode
+    entropy_channel_encode = frackture_module.entropy_channel_encode
+    entropy_channel_decode = frackture_module.entropy_channel_decode
+    merge_reconstruction = frackture_module.merge_reconstruction
 
 class TestOptimization:
     """Test optimization functionality and properties"""

@@ -9,12 +9,17 @@ import importlib.util
 
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-# Import the main module (handling the space in filename)
-module_path = os.path.join(os.path.dirname(__file__), '..', 'frackture (2).py')
-spec = importlib.util.spec_from_file_location("frackture_2", module_path)
-frackture_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(frackture_module)
+# Import the main module - try new package structure first, fall back to old
+try:
+    import frackture as frackture_module
+except ImportError:
+    # Fall back to old module with space in filename
+    module_path = os.path.join(os.path.dirname(__file__), '..', 'frackture (2).py')
+    spec = importlib.util.spec_from_file_location("frackture_2", module_path)
+    frackture_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(frackture_module)
 
 # Expose functions
 frackture_preprocess_universal_v2_6 = frackture_module.frackture_preprocess_universal_v2_6

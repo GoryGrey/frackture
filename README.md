@@ -16,18 +16,51 @@ Frackture is a **symbolic compression engine** using recursive logic and entropy
 pip install frackture
 ```
 
+### Development Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/GoryGrey/frackture.git
+cd frackture
+
+# Install in editable mode with dev dependencies
+pip install -e ".[dev]"
+
+# Or using make
+make install-dev
+```
+
 ---
 
 ## 🧪 Basic Usage
 
 ```python
-from frackture import compress, decompress
+from frackture import (
+    frackture_preprocess_universal_v2_6,
+    frackture_v3_3_safe,
+    frackture_v3_3_reconstruct
+)
 
+# Compress data
 data = b"Hello world. This is a test of the emergency broadcast system."
-compressed = compress(data)
-original = decompress(compressed)
+preprocessed = frackture_preprocess_universal_v2_6(data)
+payload = frackture_v3_3_safe(preprocessed)
 
-print(original)  # should match original input
+# Decompress
+reconstructed = frackture_v3_3_reconstruct(payload)
+```
+
+### CLI Usage
+
+```bash
+# Compress data
+echo "hello world" | frackture compress > compressed.json
+
+# Generate hash
+frackture hash -i myfile.txt
+
+# Optimize compression
+frackture optimize -i data.bin --trials 10
 ```
 
 ---
@@ -97,3 +130,32 @@ MIT — do what you want, just don’t sue me.
 ## 🔗 PyPI
 
 [https://pypi.org/project/frackture/](https://pypi.org/project/frackture/)
+
+## 🛠 Development
+
+### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run with coverage
+make test-cov
+
+# Run linting
+make lint
+
+# Format code
+make format
+```
+
+### Building and Publishing
+
+See [RELEASE.md](RELEASE.md) for detailed instructions on creating tagged releases and publishing to PyPI.
+
+---
+
+## 🔗 Links
+
+- **GitHub**: [https://github.com/GoryGrey/frackture](https://github.com/GoryGrey/frackture)
+- **Issues**: [https://github.com/GoryGrey/frackture/issues](https://github.com/GoryGrey/frackture/issues)
