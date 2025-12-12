@@ -1,0 +1,9 @@
+The quick brown fox jumps over the lazy dog. This is sample text content
+that represents typical prose, documentation, or natural language content.
+Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis
+nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.
+
+This text can be repeated and concatenated to create larger test files.
+It contains standard ASCII characters and common punctuation marks.
+The content is designed to be representative of real-world text documents.

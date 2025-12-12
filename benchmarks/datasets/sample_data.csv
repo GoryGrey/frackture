@@ -1,0 +1,6 @@
+id,product,category,price,quantity,sold
+1,Laptop,Electronics,999.99,50,32
+2,Mouse,Peripherals,29.99,200,156
+3,Keyboard,Peripherals,79.99,150,98
+4,Monitor,Electronics,299.99,75,45
+5,USB Cable,Accessories,9.99,500,387

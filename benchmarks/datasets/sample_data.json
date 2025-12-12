@@ -1,0 +1,48 @@
+{
+  "users": [
+    {
+      "id": 1,
+      "name": "Alice Smith",
+      "email": "alice@example.com",
+      "age": 28,
+      "active": true,
+      "tags": [
+        "python",
+        "rust"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "Bob Johnson",
+      "email": "bob@example.com",
+      "age": 35,
+      "active": false,
+      "tags": [
+        "javascript",
+        "go"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "Carol White",
+      "email": "carol@example.com",
+      "age": 42,
+      "active": true,
+      "tags": [
+        "java",
+        "kotlin"
+      ]
+    }
+  ],
+  "metadata": {
+    "version": "2.0",
+    "timestamp": "2024-01-15T10:23:45Z",
+    "count": 3,
+    "schema": "user_v2"
+  },
+  "settings": {
+    "enable_caching": true,
+    "max_connections": 100,
+    "timeout_seconds": 30
+  }
+}
