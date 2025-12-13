@@ -44,19 +44,14 @@ def generate_sparkline(data, min_val=None, max_val=None):
 def analyze_payload_size(results_data):
     """Analyze if payload size is fixed."""
     sizes = []
-    is_fixed_96b = True
     
     for dataset, methods in results_data.items():
         for m in methods:
             if m['name'] == 'Frackture':
-                sizes.append(m['serialized_total_bytes'])
-                if not m.get('payload_is_96b', False) and abs(m['serialized_total_bytes'] - 96) > 5:
-                     # Allow some small variance, but the flag should be the source of truth
-                     # If the flag is false, we check if it's strictly consistently something else or varying
-                     pass
+                sizes.append(m.get('serialized_total_bytes', 0))
 
     if not sizes:
-        return "No Frackture data found", 0, 0, 0
+        return {"is_fixed": False, "min": 0, "max": 0, "avg": 0, "variance": 0}
 
     min_size = min(sizes)
     max_size = max(sizes)
@@ -80,9 +75,6 @@ def get_compression_stats(results_data, tier_filter=None):
     throughputs = []
     
     for dataset, methods in results_data.items():
-        # Heuristic for tier if not explicitly available, though dataset_type might help
-        # For now, we trust the dataset naming or original_size if we implemented filters
-        
         for m in methods:
             if m['name'] == 'Frackture':
                 # Skip if we want to filter by size and it doesn't match
@@ -97,7 +89,6 @@ def get_compression_stats(results_data, tier_filter=None):
 
 def compare_methods(results_data):
     """Compare Frackture against other methods."""
-    # Structure: { method: { 'ratios': [], 'speeds': [] } }
     stats = defaultdict(lambda: {'ratios': [], 'speeds': [], 'mem': []})
     
     for dataset, methods in results_data.items():
@@ -163,6 +154,77 @@ def analyze_data_types(results_data):
         }
     return summary
 
+def analyze_reliability(results_data):
+    """Analyze reliability metrics: Lossless, Determinism, Fault Injection."""
+    lossless_count = 0
+    lossy_count = 0
+    deterministic_count = 0
+    nondeterministic_count = 0
+    fault_passed_count = 0
+    fault_failed_count = 0
+    total_frackture_runs = 0
+    
+    for dataset, methods in results_data.items():
+        for m in methods:
+            if m['name'] == 'Frackture':
+                total_frackture_runs += 1
+                if m.get('is_lossless', False):
+                    lossless_count += 1
+                else:
+                    lossy_count += 1
+                
+                if m.get('is_deterministic', False):
+                    deterministic_count += 1
+                else:
+                    nondeterministic_count += 1
+                
+                if m.get('fault_injection_passed', False):
+                    fault_passed_count += 1
+                else:
+                    fault_failed_count += 1
+
+    return {
+        "is_lossy": lossy_count > 0,
+        "lossless_runs": lossless_count,
+        "lossy_runs": lossy_count,
+        "is_deterministic": nondeterministic_count == 0,
+        "deterministic_runs": deterministic_count,
+        "nondeterministic_runs": nondeterministic_count,
+        "fault_injection_passed": fault_passed_count > 0 and fault_failed_count == 0, # Strict
+        "fault_passed_runs": fault_passed_count,
+        "fault_failed_runs": fault_failed_count,
+        "total_runs": total_frackture_runs
+    }
+
+def analyze_by_size_tier(results_data):
+    """Analyze performance by size tier."""
+    tiers = defaultdict(lambda: {'ratios': [], 'speeds': []})
+    
+    for dataset, methods in results_data.items():
+        for m in methods:
+            if m['name'] == 'Frackture':
+                size = m['original_size']
+                if size < 100:
+                    tier = "Tiny (<100B)"
+                elif size < 1024 * 1024:
+                    tier = "Small/Medium (100KB+)"
+                elif size < 100 * 1024 * 1024:
+                    tier = "Large (1MB+)"
+                else:
+                    tier = "Extreme (>100MB)"
+                
+                tiers[tier]['ratios'].append(m['compression_ratio'])
+                tiers[tier]['speeds'].append(m['encode_throughput'])
+    
+    summary = {}
+    for tier, data in tiers.items():
+        summary[tier] = {
+            'avg_ratio': statistics.mean(data['ratios']) if data['ratios'] else 0,
+            'avg_speed': statistics.mean(data['speeds']) if data['speeds'] else 0,
+            'count': len(data['ratios'])
+        }
+    return summary
+
 def main():
     parser = argparse.ArgumentParser(description="Analyze Frackture benchmark results")
     parser.add_argument('input_file', nargs='?', help="Path to JSON results file")
@@ -173,6 +235,10 @@ def main():
     # Find latest result if not specified
     if not args.input_file:
         results_dir = os.path.join(os.path.dirname(__file__), 'results')
+        if not os.path.exists(results_dir):
+            print(f"Results directory not found: {results_dir}")
+            sys.exit(1)
+            
         files = [os.path.join(results_dir, f) for f in os.listdir(results_dir) if f.endswith('.json')]
         if not files:
             print("No result files found in benchmarks/results/")
@@ -202,6 +268,12 @@ def main():
     # 5. Data Type Analysis
     type_stats = analyze_data_types(results)
 
+    # 6. Reliability Analysis
+    reliability = analyze_reliability(results)
+    
+    # 7. Size Tier Analysis
+    tier_stats = analyze_by_size_tier(results)
+
     # Ensure output directory exists
     os.makedirs(args.output_dir, exist_ok=True)
     
@@ -221,16 +293,25 @@ def main():
         f.write(f"| **Avg Throughput** | {statistics.mean(frackture_speeds):.2f} MB/s |\n")
         f.write(f"| **Avg Optimization Gain** | {opt_avg:.2f}% |\n")
         f.write(f"| **Payload Fixed?** | {'Yes' if payload_stats['is_fixed'] else 'No'} (Range: {payload_stats['min']}-{payload_stats['max']} bytes) |\n")
+        f.write(f"| **Lossless?** | {'Yes' if not reliability['is_lossy'] else 'No'} (Lossy runs: {reliability['lossy_runs']}/{reliability['total_runs']}) |\n")
+        f.write(f"| **Deterministic?** | {'Yes' if reliability['is_deterministic'] else 'No'} |\n")
         f.write("\n")
         
         # Explicit Answers
         f.write("## 2. Key Questions\n\n")
         
-        f.write("### Is the payload size fixed?\n")
+        f.write("### Is the payload size fixed at 96 bytes?\n")
         if payload_stats['is_fixed']:
             f.write(f"**Yes.** The payload size remains consistent at approximately {payload_stats['avg']:.0f} bytes.\n")
         else:
-            f.write(f"**No.** The payload size varies between {payload_stats['min']} and {payload_stats['max']} bytes (Avg: {payload_stats['avg']:.1f}). This may indicate fallback behavior on small datasets or variable metadata.\n")
+            f.write(f"**No.** The payload size varies between {payload_stats['min']} and {payload_stats['max']} bytes (Avg: {payload_stats['avg']:.1f}). This contradicts the 96-byte target in some cases.\n")
+        f.write("\n")
+
+        f.write("### Is Frackture lossy or lossless?\n")
+        if reliability['is_lossy']:
+            f.write(f"**Lossy.** Frackture is primarily a lossy compression algorithm. {reliability['lossy_runs']} out of {reliability['total_runs']} runs were lossy. Reconstruction relies on minimizing MSE rather than exact bitwise restoration.\n")
+        else:
+             f.write(f"**Lossless.** All runs were verified as lossless.\n")
         f.write("\n")
         
         f.write("### What compression gains does Frackture achieve?\n")
@@ -249,9 +330,23 @@ def main():
         for name, stats in sorted_methods:
             f.write(f"| {name} | {stats['avg_ratio']:.2f}x | {stats['avg_speed']:.2f} | {stats['avg_mem']:.1f} |\n")
         f.write("\n")
+
+        f.write("### Is determinism validated?\n")
+        if reliability['is_deterministic']:
+             f.write(f"**Yes.** All {reliability['deterministic_runs']} runs produced identical outputs for identical inputs.\n")
+        else:
+             f.write(f"**No.** Determinism failed in {reliability['nondeterministic_runs']} cases.\n")
+        f.write("\n")
         
         # Highlight Tables
         f.write("## 3. Performance Highlights\n\n")
+
+        f.write("### Performance by Size Tier\n")
+        f.write("| Tier | Avg Ratio | Avg Speed (MB/s) | Count |\n")
+        f.write("|---|---|---|---|\n")
+        for tier, stats in tier_stats.items():
+             f.write(f"| {tier} | {stats['avg_ratio']:.2f}x | {stats['avg_speed']:.2f} | {stats['count']} |\n")
+        f.write("\n")
         
         f.write("### Random vs Repetitive Data\n")
         f.write("| Data Type | Avg Ratio | Avg MSE |\n")
@@ -263,6 +358,12 @@ def main():
         f.write("### Optimization Gains\n")
         f.write(f"The optimization loop improved reconstruction MSE by an average of **{opt_avg:.2f}%** (Max: {opt_max:.2f}%).\n")
         f.write(f"Trend: `{generate_sparkline(opt_gains)}`\n")
+        f.write("\n")
+
+        f.write("### Reliability & Fault Injection\n")
+        f.write(f"- **Fault Injection:** {'Passed' if reliability['fault_injection_passed'] else 'Failed'}\n")
+        f.write(f"- **Passed Runs:** {reliability['fault_passed_runs']}\n")
+        f.write(f"- **Failed Runs:** {reliability['fault_failed_runs']}\n")
         f.write("\n")
 
         f.write("### Throughput Distribution\n")
@@ -279,8 +380,10 @@ def main():
             "payload_variance": payload_stats['variance'],
             "is_payload_fixed": payload_stats['is_fixed']
         },
+        "reliability": reliability,
         "comparisons": method_comparison,
         "data_types": type_stats,
+        "size_tiers": tier_stats,
         "optimization": {
             "avg_gain_pct": opt_avg,
             "max_gain_pct": opt_max
