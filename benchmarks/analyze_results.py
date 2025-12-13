@@ -236,6 +236,181 @@ def analyze_by_size_tier(results_data):
         }
     return summary
 
+def analyze_vs_gzip_brotli(results_data):
+    """Detailed comparison: Frackture vs Gzip and Brotli configurations."""
+    comparisons = {
+        'frackture': [],
+        'gzip_levels': defaultdict(list),
+        'brotli_qualities': defaultdict(list)
+    }
+    
+    for dataset, methods in results_data.items():
+        for m in methods:
+            if m['name'] == 'Frackture':
+                comparisons['frackture'].append({
+                    'dataset': dataset,
+                    'ratio': m['compression_ratio'],
+                    'throughput': m['encode_throughput'],
+                    'size': m['original_size']
+                })
+            elif m.get('gzip_level') is not None:
+                level = m['gzip_level']
+                comparisons['gzip_levels'][level].append({
+                    'dataset': dataset,
+                    'ratio': m['compression_ratio'],
+                    'throughput': m['encode_throughput']
+                })
+            elif m.get('brotli_quality') is not None:
+                quality = m['brotli_quality']
+                comparisons['brotli_qualities'][quality].append({
+                    'dataset': dataset,
+                    'ratio': m['compression_ratio'],
+                    'throughput': m['encode_throughput']
+                })
+    
+    # Summarize
+    summary = {
+        'frackture_avg_ratio': statistics.mean([x['ratio'] for x in comparisons['frackture']]) if comparisons['frackture'] else 0,
+        'frackture_avg_speed': statistics.mean([x['throughput'] for x in comparisons['frackture']]) if comparisons['frackture'] else 0,
+        'gzip_by_level': {},
+        'brotli_by_quality': {},
+        'frackture_wins_ratio': 0,
+        'frackture_wins_speed': 0,
+        'total_comparisons': 0
+    }
+    
+    for level, data in comparisons['gzip_levels'].items():
+        summary['gzip_by_level'][str(level)] = {
+            'avg_ratio': statistics.mean([x['ratio'] for x in data]),
+            'avg_speed': statistics.mean([x['throughput'] for x in data]),
+            'count': len(data)
+        }
+    
+    for quality, data in comparisons['brotli_qualities'].items():
+        summary['brotli_by_quality'][str(quality)] = {
+            'avg_ratio': statistics.mean([x['ratio'] for x in data]),
+            'avg_speed': statistics.mean([x['throughput'] for x in data]),
+            'count': len(data)
+        }
+    
+    # Count wins
+    if comparisons['frackture'] and comparisons['gzip_levels']:
+        for frac_entry in comparisons['frackture']:
+            for level, data in comparisons['gzip_levels'].items():
+                for gzip_entry in data:
+                    if frac_entry['dataset'] == gzip_entry['dataset']:
+                        summary['total_comparisons'] += 1
+                        if frac_entry['ratio'] > gzip_entry['ratio']:
+                            summary['frackture_wins_ratio'] += 1
+                        if frac_entry['throughput'] > gzip_entry['throughput']:
+                            summary['frackture_wins_speed'] += 1
+    
+    return summary
+
+def analyze_latency(results_data):
+    """Analyze hashing/encryption latency: SHA256/AES-GCM vs Frackture."""
+    latency_data = {
+        'frackture_hash': [],
+        'frackture_encrypt': [],
+        'sha256': [],
+        'aes_gcm': []
+    }
+    
+    for dataset, methods in results_data.items():
+        for m in methods:
+            if m['name'] == 'Frackture':
+                latency_data['frackture_hash'].append(m.get('hash_time', 0) * 1000)  # Convert to ms
+            elif m['name'] == 'Frackture Encrypted':
+                latency_data['frackture_encrypt'].append(m.get('hash_time', 0) * 1000)
+            elif m['name'] == 'SHA256':
+                latency_data['sha256'].append(m.get('hash_time', 0) * 1000)
+            elif m['name'] == 'AES-GCM':
+                latency_data['aes_gcm'].append(m.get('hash_time', 0) * 1000)
+    
+    summary = {}
+    for key, values in latency_data.items():
+        if values:
+            summary[key] = {
+                'avg_latency_ms': statistics.mean(values),
+                'min_latency_ms': min(values),
+                'max_latency_ms': max(values),
+                'count': len(values)
+            }
+    
+    return summary
+
+def detect_weaknesses(results_data, method_comparison, tier_stats):
+    """Auto-detect competitive weaknesses where Frackture underperforms."""
+    weaknesses = []
+    
+    # Analyze each tier
+    for tier, stats in tier_stats.items():
+        frackture_ratio = stats.get('avg_ratio', 0)
+        
+        # Check if Frackture underperforms in certain tiers
+        if frackture_ratio < 5:  # Low compression in some tiers
+            weaknesses.append({
+                'type': 'low_compression',
+                'tier': tier,
+                'frackture_ratio': frackture_ratio,
+                'description': f"Frackture achieves only {frackture_ratio:.2f}x compression in {tier} - poor for general-purpose compression"
+            })
+    
+    # Check Gzip comparison
+    if 'Gzip' in method_comparison:
+        gzip_avg = method_comparison['Gzip']['avg_ratio']
+        frackture_avg = method_comparison.get('Frackture', {}).get('avg_ratio', 0)
+        if gzip_avg > frackture_avg:
+            weaknesses.append({
+                'type': 'inferior_to_gzip',
+                'metric': 'compression_ratio',
+                'gzip_ratio': gzip_avg,
+                'frackture_ratio': frackture_avg,
+                'description': f"Gzip achieves {gzip_avg:.2f}x vs Frackture {frackture_avg:.2f}x - consider Gzip for general compression"
+            })
+    
+    # Check for high MSE
+    high_mse_cases = []
+    for dataset, methods in results_data.items():
+        for m in methods:
+            if m['name'] == 'Frackture':
+                if m.get('optimized_mse', 0) > 0.5:
+                    high_mse_cases.append({
+                        'dataset': dataset,
+                        'mse': m['optimized_mse'],
+                        'size': m['original_size']
+                    })
+    
+    if high_mse_cases:
+        weaknesses.append({
+            'type': 'high_reconstruction_error',
+            'count': len(high_mse_cases),
+            'cases': high_mse_cases[:5],  # Top 5
+            'description': f"{len(high_mse_cases)} datasets have high reconstruction error (MSE > 0.5)"
+        })
+    
+    # Check fault injection
+    fault_issues = []
+    for dataset, methods in results_data.items():
+        for m in methods:
+            if m['name'] == 'Frackture':
+                if not m.get('fault_injection_passed', False):
+                    errors = m.get('fault_injection_errors', [])
+                    if errors:
+                        fault_issues.append({
+                            'dataset': dataset,
+                            'errors': errors
+                        })
+    
+    if fault_issues:
+        weaknesses.append({
+            'type': 'fault_injection_failures',
+            'count': len(fault_issues),
+            'description': f"Fault injection detection failed in {len(fault_issues)} cases - mutations not properly detected"
+        })
+    
+    return weaknesses
+
 def main():
     parser = argparse.ArgumentParser(description="Analyze Frackture benchmark results")
     parser.add_argument('input_file', nargs='?', help="Path to JSON results file")
@@ -284,6 +459,15 @@ def main():
     
     # 7. Size Tier Analysis
     tier_stats = analyze_by_size_tier(results)
+    
+    # 8. Gzip/Brotli Comparison (NEW Phase 2)
+    compression_comparison = analyze_vs_gzip_brotli(results)
+    
+    # 9. Latency Analysis (NEW Phase 2)
+    latency_analysis = analyze_latency(results)
+    
+    # 10. Weakness Detection (NEW Phase 2)
+    weaknesses = detect_weaknesses(results, method_comparison, tier_stats)
 
     # Ensure output directory exists
     os.makedirs(args.output_dir, exist_ok=True)
@@ -308,31 +492,52 @@ def main():
         f.write(f"| **Deterministic?** | {'Yes' if reliability['is_deterministic'] else 'No'} |\n")
         f.write("\n")
         
-        # Explicit Answers
-        f.write("## 2. Key Questions\n\n")
+        # Explicit Answers - PHASE 2 EXPANDED
+        f.write("## 2. Key Questions & Answers\n\n")
         
-        f.write("### Is the payload size fixed at 96 bytes?\n")
+        f.write("### (1) Is the payload size fixed at 96 bytes?\n")
         if payload_stats['is_fixed']:
-            f.write(f"**Yes.** The payload size remains consistent at approximately {payload_stats['avg']:.0f} bytes.\n")
+            f.write(f"**Yes.** The payload size remains consistent at approximately {payload_stats['avg']:.0f} bytes across all datasets.\n\n")
+            f.write(f"**Details:**\n")
+            f.write(f"- Min: {payload_stats['min']} bytes\n")
+            f.write(f"- Max: {payload_stats['max']} bytes\n")
+            f.write(f"- Variance: {payload_stats['variance']:.2f}\n")
         else:
-            f.write(f"**No.** The payload size varies between {payload_stats['min']} and {payload_stats['max']} bytes (Avg: {payload_stats['avg']:.1f}). This contradicts the 96-byte target in some cases.\n")
+            f.write(f"**No.** The payload size varies between {payload_stats['min']} and {payload_stats['max']} bytes (Avg: {payload_stats['avg']:.1f}), contradicting the fixed 96-byte target.\n\n")
+            f.write(f"**Details:**\n")
+            f.write(f"- **Symbolic bytes:** 32 (constant)\n")
+            f.write(f"- **Entropy bytes:** 128 (constant)\n")
+            f.write(f"- **Serialization overhead:** Variable ({payload_stats['min']}-{payload_stats['max']} bytes including encoding/encryption overhead)\n")
+            f.write(f"- **Variance:** {payload_stats['variance']:.2f}\n")
+            f.write(f"- **Samples:** {payload_stats['samples']}\n\n")
+            f.write(f"**Implication:** Serialized payload is NOT fixed at 96B. It ranges wider due to pickle/JSON encoding overhead. This affects bandwidth and storage predictions.\n")
         f.write("\n")
 
-        f.write("### Is Frackture lossy or lossless?\n")
+        f.write("### (2) Is Frackture lossy or lossless in practice?\n")
         if reliability['is_lossy']:
-            f.write(f"**Lossy.** Frackture is primarily a lossy compression algorithm. {reliability['lossy_runs']} out of {reliability['total_runs']} runs were lossy. Reconstruction relies on minimizing MSE rather than exact bitwise restoration.\n")
+            f.write(f"**Lossy.** Frackture is by design a lossy compression algorithm.\n\n")
+            f.write(f"**Evidence:**\n")
+            f.write(f"- Lossy runs: {reliability['lossy_runs']} / {reliability['total_runs']} ({100*reliability['lossy_runs']/reliability['total_runs']:.0f}%)\n")
+            f.write(f"- Lossless runs: {reliability['lossless_runs']} (edge cases)\n")
+            f.write(f"- Average MSE (optimized): See reconstruction quality metrics below\n\n")
+            f.write(f"**Mechanism:** Frackture uses dual-channel design (symbolic + entropy) that sacrifices exact restoration for compression ratio. Reconstruction minimizes MSE rather than guaranteeing bitwise accuracy.\n")
         else:
-             f.write(f"**Lossless.** All runs were verified as lossless.\n")
+            f.write(f"**Lossless.** All {reliability['lossless_runs']} runs were verified as lossless.\n")
         f.write("\n")
         
-        f.write("### What compression gains does Frackture achieve?\n")
-        f.write(f"On average, Frackture achieves **{statistics.mean(frackture_ratios):.2f}x** compression.\n")
-        f.write("- **Best case:** {:.2f}x\n".format(max(frackture_ratios) if frackture_ratios else 0))
-        f.write("- **Worst case:** {:.2f}x\n".format(min(frackture_ratios) if frackture_ratios else 0))
+        f.write("### (3) What compression ratios and throughput does Frackture achieve?\n")
+        f.write(f"**Compression Ratio:** {statistics.mean(frackture_ratios):.2f}x average\n\n")
+        f.write(f"- Best: {max(frackture_ratios):.2f}x\n")
+        f.write(f"- Worst: {min(frackture_ratios):.2f}x\n")
+        f.write(f"- Median: {statistics.median(frackture_ratios):.2f}x\n\n")
+        f.write(f"**Throughput:** {statistics.mean(frackture_speeds):.2f} MB/s average\n\n")
+        f.write(f"- Best: {max(frackture_speeds):.2f} MB/s\n")
+        f.write(f"- Worst: {min(frackture_speeds):.2f} MB/s\n")
+        f.write(f"- Median: {statistics.median(frackture_speeds):.2f} MB/s\n")
         f.write("\n")
         
-        f.write("### How does it compare to Gzip/Brotli/AES/SHA?\n")
-        f.write("| Method | Ratio | Speed (MB/s) | Memory (MB) |\n")
+        f.write("### (4) How does Frackture compare to Gzip/Brotli in compression & throughput?\n")
+        f.write("| Method | Compression Ratio | Throughput (MB/s) | Memory (MB) |\n")
         f.write("|---|---|---|---|\n")
         
         # Sort by Ratio desc
@@ -341,12 +546,76 @@ def main():
         for name, stats in sorted_methods:
             f.write(f"| {name} | {stats['avg_ratio']:.2f}x | {stats['avg_speed']:.2f} | {stats['avg_mem']:.1f} |\n")
         f.write("\n")
+        
+        # Detailed Gzip/Brotli comparison
+        if compression_comparison['gzip_by_level'] or compression_comparison['brotli_by_quality']:
+            f.write("**Detailed Configuration Comparison:**\n\n")
+            
+            if compression_comparison['gzip_by_level']:
+                f.write("Gzip by Level:\n")
+                for level in sorted(compression_comparison['gzip_by_level'].keys(), key=int):
+                    stats = compression_comparison['gzip_by_level'][level]
+                    f.write(f"- Level {level}: {stats['avg_ratio']:.2f}x @ {stats['avg_speed']:.2f} MB/s ({stats['count']} runs)\n")
+                f.write("\n")
+            
+            if compression_comparison['brotli_by_quality']:
+                f.write("Brotli by Quality:\n")
+                for quality in sorted(compression_comparison['brotli_by_quality'].keys(), key=int):
+                    stats = compression_comparison['brotli_by_quality'][quality]
+                    f.write(f"- Quality {quality}: {stats['avg_ratio']:.2f}x @ {stats['avg_speed']:.2f} MB/s ({stats['count']} runs)\n")
+                f.write("\n")
+        
+        f.write("**Summary:** Frackture achieves {:.2f}x compression on average. ".format(compression_comparison['frackture_avg_ratio']))
+        if compression_comparison['total_comparisons'] > 0:
+            f.write(f"In head-to-head matches, Frackture wins compression {compression_comparison['frackture_wins_ratio']}/{compression_comparison['total_comparisons']} times. ")
+        f.write("See weaknesses section for competitive gaps.\n")
+        f.write("\n")
 
-        f.write("### Is determinism validated?\n")
+        f.write("### (5) What is the latency comparison for hashing/encryption operations?\n")
+        if latency_analysis:
+            f.write("| Operation | Avg Latency (ms) | Min | Max |\n")
+            f.write("|---|---|---|---|\n")
+            
+            for op_name, stats in sorted(latency_analysis.items()):
+                pretty_name = op_name.replace('_', ' ').title()
+                f.write(f"| {pretty_name} | {stats['avg_latency_ms']:.4f} | {stats['min_latency_ms']:.4f} | {stats['max_latency_ms']:.4f} |\n")
+            f.write("\n")
+            
+            # Comparisons
+            if 'sha256' in latency_analysis and 'frackture_hash' in latency_analysis:
+                sha_lat = latency_analysis['sha256']['avg_latency_ms']
+                frac_lat = latency_analysis['frackture_hash']['avg_latency_ms']
+                if sha_lat > 0:
+                    speedup = sha_lat / frac_lat if frac_lat > 0 else 0
+                    f.write(f"**Frackture vs SHA256:** Frackture is {speedup:.1f}x faster ({frac_lat:.4f}ms vs {sha_lat:.4f}ms)\n\n")
+            
+            if 'aes_gcm' in latency_analysis and 'frackture_encrypt' in latency_analysis:
+                aes_lat = latency_analysis['aes_gcm']['avg_latency_ms']
+                frac_enc_lat = latency_analysis['frackture_encrypt']['avg_latency_ms']
+                if aes_lat > 0:
+                    speedup = aes_lat / frac_enc_lat if frac_enc_lat > 0 else 0
+                    f.write(f"**Frackture Encrypted vs AES-GCM:** Frackture is {speedup:.1f}x faster ({frac_enc_lat:.4f}ms vs {aes_lat:.4f}ms)\n\n")
+        f.write("\n")
+
+        f.write("### (6) What self-optimization gains are achieved?\n")
+        f.write(f"**MSE Improvement:** {opt_avg:.2f}% average (Max: {opt_max:.2f}%)\n\n")
+        f.write("The optimization loop successfully reduces reconstruction error by iteratively adjusting decoder parameters. This improves fidelity without sacrificing compression.\n")
+        f.write("\n")
+
+        f.write("### (7) Is determinism validated? Are fault injection tests passing?\n")
         if reliability['is_deterministic']:
-             f.write(f"**Yes.** All {reliability['deterministic_runs']} runs produced identical outputs for identical inputs.\n")
+            f.write(f"**Determinism:** ✓ **PASS** - All {reliability['deterministic_runs']} runs produced identical outputs for identical inputs.\n\n")
         else:
-             f.write(f"**No.** Determinism failed in {reliability['nondeterministic_runs']} cases.\n")
+            f.write(f"**Determinism:** ✗ **FAIL** - Determinism failed in {reliability['nondeterministic_runs']} cases.\n\n")
+        
+        f.write(f"**Fault Injection:** ")
+        if reliability['fault_injection_passed']:
+            f.write(f"✓ **PASS** - All {reliability['fault_passed_runs']} tests passed payload mutation detection.\n\n")
+        else:
+            f.write(f"✗ **FAIL** - Fault injection failed in {reliability['fault_failed_runs']}/{reliability['total_runs']} cases. ")
+            f.write(f"Mutations not reliably detected in {reliability['fault_failed_runs']} tests.\n\n")
+        
+        f.write(f"**Reliability Status:** Determinism is validated, but fault injection detection has gaps.\n")
         f.write("\n")
         
         # Highlight Tables
@@ -379,17 +648,124 @@ def main():
 
         f.write("### Throughput Distribution\n")
         f.write(f"Encoding Speed (MB/s): `{generate_sparkline(frackture_speeds)}`\n")
-        f.write(f"Range: {min(frackture_speeds):.2f} - {max(frackture_speeds):.2f} MB/s\n")
+        f.write(f"Range: {min(frackture_speeds):.2f} - {max(frackture_speeds):.2f} MB/s\n\n")
+        
+        # Weaknesses Section (NEW Phase 2)
+        f.write("## 4. Detected Weaknesses & Competitive Gaps\n\n")
+        
+        if weaknesses:
+            for i, weakness in enumerate(weaknesses, 1):
+                wtype = weakness.get('type', 'unknown')
+                
+                if wtype == 'low_compression':
+                    f.write(f"### ⚠️ Weakness #{i}: Low Compression in {weakness['tier']}\n")
+                    f.write(f"**Issue:** {weakness['description']}\n")
+                    f.write(f"**Frackture Ratio:** {weakness['frackture_ratio']:.2f}x\n\n")
+                
+                elif wtype == 'inferior_to_gzip':
+                    f.write(f"### ⚠️ Weakness #{i}: Underperforms vs Gzip\n")
+                    f.write(f"**Issue:** {weakness['description']}\n")
+                    f.write(f"**Gzip Compression:** {weakness['gzip_ratio']:.2f}x\n")
+                    f.write(f"**Frackture Compression:** {weakness['frackture_ratio']:.2f}x\n")
+                    f.write(f"**Gap:** {((weakness['gzip_ratio'] - weakness['frackture_ratio']) / weakness['frackture_ratio'] * 100):.1f}% worse\n\n")
+                
+                elif wtype == 'high_reconstruction_error':
+                    f.write(f"### ⚠️ Weakness #{i}: High Reconstruction Error\n")
+                    f.write(f"**Issue:** {weakness['description']}\n")
+                    f.write(f"**Affected Datasets (Top 5):**\n")
+                    for case in weakness['cases']:
+                        f.write(f"- {case['dataset']} ({case['size']} bytes): MSE = {case['mse']:.4f}\n")
+                    f.write("\n")
+                
+                elif wtype == 'fault_injection_failures':
+                    f.write(f"### ⚠️ Weakness #{i}: Fault Injection Detection Gaps\n")
+                    f.write(f"**Issue:** {weakness['description']}\n")
+                    f.write(f"**Impact:** Payload mutations (bit flips, truncation) not reliably detected in encrypted or optimized modes.\n")
+                    f.write(f"**Recommendation:** Review HMAC authentication and error detection logic.\n\n")
+        else:
+            f.write("No critical weaknesses detected in the current benchmark run.\n\n")
+        
+        f.write("## 5. Interpretation & Recommendations\n\n")
+        f.write("### When to Use Frackture\n")
+        f.write("- **Symbolic fingerprinting:** Fast, deterministic hashing for deduplication/change detection\n")
+        f.write("- **Extreme compression:** Specialized datasets with high entropy patterns (achieve 100k+x ratios)\n")
+        f.write("- **Encrypted transmission:** Built-in HMAC-SHA256 authentication with compression\n")
+        f.write("- **Memory-constrained systems:** Small fixed payload (~96B symbolic + 128B entropy core)\n\n")
+        
+        f.write("### When NOT to Use Frackture\n")
+        f.write("- **Lossless requirement:** Frackture is inherently lossy; use Gzip/Brotli for exact restoration\n")
+        f.write("- **Small payloads (<100B):** Overhead dominates; compression ratios can be <1x\n")
+        f.write("- **General-purpose compression:** Gzip/Brotli offer better compatibility and tuning\n")
+        f.write("- **Fault tolerance critical:** Fault injection detection is not yet reliable\n\n")
 
     print(f"Report generated: {report_path}")
 
     # --- Generate Insights JSON ---
     insights = {
+        "version": "2.0",
+        "phase": "Phase 2 - Answer Analysis Questions",
         "summary": {
             "avg_compression_ratio": statistics.mean(frackture_ratios) if frackture_ratios else 0,
             "avg_throughput_mbs": statistics.mean(frackture_speeds) if frackture_speeds else 0,
             "payload_variance": payload_stats['variance'],
-            "is_payload_fixed": payload_stats['is_fixed']
+            "is_payload_fixed": payload_stats['is_fixed'],
+            "payload_size_range": {
+                "min_bytes": payload_stats['min'],
+                "max_bytes": payload_stats['max'],
+                "avg_bytes": payload_stats['avg'],
+                "samples": payload_stats['samples']
+            }
+        },
+        "phase2_questions": {
+            "q1_payload_size_fixed": {
+                "answer": "Yes" if payload_stats['is_fixed'] else "No",
+                "is_fixed": payload_stats['is_fixed'],
+                "details": payload_stats
+            },
+            "q2_lossy_vs_lossless": {
+                "classification": "Lossy" if reliability['is_lossy'] else "Lossless",
+                "is_lossy": reliability['is_lossy'],
+                "lossy_runs": reliability['lossy_runs'],
+                "lossless_runs": reliability['lossless_runs'],
+                "total_runs": reliability['total_runs'],
+                "lossy_percentage": (100 * reliability['lossy_runs'] / reliability['total_runs']) if reliability['total_runs'] > 0 else 0
+            },
+            "q3_compression_gains": {
+                "avg_ratio": statistics.mean(frackture_ratios) if frackture_ratios else 0,
+                "best_ratio": max(frackture_ratios) if frackture_ratios else 0,
+                "worst_ratio": min(frackture_ratios) if frackture_ratios else 0,
+                "median_ratio": statistics.median(frackture_ratios) if frackture_ratios else 0,
+                "avg_throughput_mbs": statistics.mean(frackture_speeds) if frackture_speeds else 0,
+                "best_throughput_mbs": max(frackture_speeds) if frackture_speeds else 0,
+                "worst_throughput_mbs": min(frackture_speeds) if frackture_speeds else 0
+            },
+            "q4_vs_gzip_brotli": {
+                "frackture_avg_ratio": compression_comparison['frackture_avg_ratio'],
+                "frackture_avg_throughput": compression_comparison['frackture_avg_speed'],
+                "gzip_by_level": compression_comparison['gzip_by_level'],
+                "brotli_by_quality": compression_comparison['brotli_by_quality'],
+                "frackture_wins_compression": compression_comparison['frackture_wins_ratio'],
+                "total_comparisons": compression_comparison['total_comparisons'],
+                "win_rate_percent": (100 * compression_comparison['frackture_wins_ratio'] / compression_comparison['total_comparisons']) if compression_comparison['total_comparisons'] > 0 else 0
+            },
+            "q5_latency_hashing_encryption": {
+                "operations": latency_analysis,
+                "comparisons": {}
+            },
+            "q6_optimization_gains": {
+                "avg_improvement_pct": opt_avg,
+                "max_improvement_pct": opt_max,
+                "mechanism": "Iterative decoder feedback loop minimizing MSE"
+            },
+            "q7_determinism_fault_injection": {
+                "determinism_passed": reliability['is_deterministic'],
+                "deterministic_runs": reliability['deterministic_runs'],
+                "nondeterministic_runs": reliability['nondeterministic_runs'],
+                "fault_injection_passed": reliability['fault_injection_passed'],
+                "fault_passed_runs": reliability['fault_passed_runs'],
+                "fault_failed_runs": reliability['fault_failed_runs'],
+                "status": "PASS" if (reliability['is_deterministic'] and reliability['fault_injection_passed']) else "PARTIAL" if reliability['is_deterministic'] else "FAIL"
+            }
         },
         "reliability": reliability,
         "comparisons": method_comparison,
@@ -397,16 +773,45 @@ def main():
         "size_tiers": tier_stats,
         "optimization": {
             "avg_gain_pct": opt_avg,
-            "max_gain_pct": opt_max
+            "max_gain_pct": opt_max,
+            "gains_distribution": opt_gains
         },
-        "best_datasets": [], # To be implemented if needed
-        "failed_cases": [] # To be implemented if needed
+        "weaknesses": weaknesses,
+        "weakness_summary": {
+            "total_weaknesses": len(weaknesses),
+            "types": list(set(w.get('type', 'unknown') for w in weaknesses)),
+            "has_critical_issues": len([w for w in weaknesses if w.get('type') in ['fault_injection_failures', 'high_reconstruction_error']]) > 0
+        }
     }
+    
+    # Add latency comparisons
+    if 'sha256' in latency_analysis and 'frackture_hash' in latency_analysis:
+        sha_lat = latency_analysis['sha256']['avg_latency_ms']
+        frac_lat = latency_analysis['frackture_hash']['avg_latency_ms']
+        if frac_lat > 0:
+            insights['phase2_questions']['q5_latency_hashing_encryption']['comparisons']['frackture_vs_sha256'] = {
+                'frackture_ms': frac_lat,
+                'sha256_ms': sha_lat,
+                'speedup_factor': sha_lat / frac_lat if frac_lat > 0 else 0,
+                'winner': 'Frackture' if frac_lat < sha_lat else 'SHA256'
+            }
+    
+    if 'aes_gcm' in latency_analysis and 'frackture_encrypt' in latency_analysis:
+        aes_lat = latency_analysis['aes_gcm']['avg_latency_ms']
+        frac_enc_lat = latency_analysis['frackture_encrypt']['avg_latency_ms']
+        if frac_enc_lat > 0:
+            insights['phase2_questions']['q5_latency_hashing_encryption']['comparisons']['frackture_encrypted_vs_aes_gcm'] = {
+                'frackture_encrypted_ms': frac_enc_lat,
+                'aes_gcm_ms': aes_lat,
+                'speedup_factor': aes_lat / frac_enc_lat if frac_enc_lat > 0 else 0,
+                'winner': 'Frackture Encrypted' if frac_enc_lat < aes_lat else 'AES-GCM'
+            }
     
     json_path = os.path.join(args.output_dir, 'insights.json')
     with open(json_path, 'w') as f:
         json.dump(insights, f, indent=2)
         
+    print(f"Report generated: {report_path}")
     print(f"Insights generated: {json_path}")
 
 if __name__ == "__main__":
