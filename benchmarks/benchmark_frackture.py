@@ -85,6 +85,11 @@ class BenchmarkResult:
     peak_memory_mb: float
     success: bool
     error: str = ""
+    
+    # Competitor settings (for multi-level sweeps)
+    gzip_level: Optional[int] = None
+    brotli_quality: Optional[int] = None
+    
     # New verification metrics
     symbolic_bytes: int = 0
     entropy_bytes: int = 0
@@ -499,7 +504,7 @@ class BenchmarkRunner:
             decode_throughput = (original_size / (1024 * 1024)) / decode_time if decode_time > 0 else 0
             
             return BenchmarkResult(
-                name=f"Gzip (level {level})",
+                name=f"Gzip L{level}",
                 dataset_type=dataset_type,
                 original_size=original_size,
                 compressed_size=compressed_size,
@@ -510,12 +515,13 @@ class BenchmarkRunner:
                 decode_throughput=decode_throughput,
                 hash_time=hash_time,
                 peak_memory_mb=peak_memory,
-                success=True
+                success=True,
+                gzip_level=level
             )
             
         except Exception as e:
             return BenchmarkResult(
-                name=f"Gzip (level {level})",
+                name=f"Gzip L{level}",
                 dataset_type=dataset_type,
                 original_size=original_size,
                 compressed_size=0,
@@ -527,7 +533,8 @@ class BenchmarkRunner:
                 hash_time=0,
                 peak_memory_mb=0,
                 success=False,
-                error=str(e)
+                error=str(e),
+                gzip_level=level
             )
     
     @staticmethod
@@ -535,7 +542,7 @@ class BenchmarkRunner:
         """Benchmark brotli compression"""
         if not HAS_BROTLI:
             return BenchmarkResult(
-                name=f"Brotli (quality {quality})",
+                name=f"Brotli Q{quality}",
                 dataset_type="unknown",
                 original_size=len(data),
                 compressed_size=0,
@@ -547,7 +554,8 @@ class BenchmarkRunner:
                 hash_time=0,
                 peak_memory_mb=0,
                 success=False,
-                error="Brotli not installed"
+                error="Brotli not installed",
+                brotli_quality=quality
             )
         
         dataset_type = "unknown"
@@ -584,7 +592,7 @@ class BenchmarkRunner:
             decode_throughput = (original_size / (1024 * 1024)) / decode_time if decode_time > 0 else 0
             
             return BenchmarkResult(
-                name=f"Brotli (quality {quality})",
+                name=f"Brotli Q{quality}",
                 dataset_type=dataset_type,
                 original_size=original_size,
                 compressed_size=compressed_size,
@@ -595,12 +603,13 @@ class BenchmarkRunner:
                 decode_throughput=decode_throughput,
                 hash_time=hash_time,
                 peak_memory_mb=peak_memory,
-                success=True
+                success=True,
+                brotli_quality=quality
             )
             
         except Exception as e:
             return BenchmarkResult(
-                name=f"Brotli (quality {quality})",
+                name=f"Brotli Q{quality}",
                 dataset_type=dataset_type,
                 original_size=original_size,
                 compressed_size=0,
@@ -612,7 +621,8 @@ class BenchmarkRunner:
                 hash_time=0,
                 peak_memory_mb=0,
                 success=False,
-                error=str(e)
+                error=str(e),
+                brotli_quality=quality
             )
             
     @staticmethod
@@ -1252,7 +1262,9 @@ def run_benchmark_suite(
     output_dir: Path = None,
     use_real_datasets: bool = None,
     gzip_level: int = 6,
-    brotli_quality: int = 6
+    brotli_quality: int = 6,
+    gzip_levels: Optional[List[int]] = None,
+    brotli_qualities: Optional[List[int]] = None
 ):
     """Run the complete benchmark suite with enhanced metrics and extreme dataset support"""
     
@@ -1268,6 +1280,23 @@ def run_benchmark_suite(
         print("Warning: Real datasets requested but DatasetRepository not available")
         use_real_datasets = False
     
+    def _dedupe_ints(values: List[int]) -> List[int]:
+        seen = set()
+        out: List[int] = []
+        for v in values:
+            if v not in seen:
+                seen.add(v)
+                out.append(v)
+        return out
+
+    if gzip_levels is None:
+        gzip_levels = [gzip_level]
+    if brotli_qualities is None:
+        brotli_qualities = [brotli_quality]
+
+    gzip_levels = _dedupe_ints(gzip_levels)
+    brotli_qualities = _dedupe_ints(brotli_qualities)
+
     print("\n" + "="*120)
     print("🔥 FRACKTURE ENHANCED BENCHMARK SUITE 🔥")
     print("="*120)
@@ -1278,6 +1307,8 @@ def run_benchmark_suite(
     print(f"💾 Psutil available: {HAS_PSUTIL}")
     print(f"📏 Tiny datasets: {'✅' if tiny_datasets else '❌'}")
     print(f"🚀 Extreme datasets: {'✅' if extreme_datasets else '❌'}")
+    print(f"🗜️  Gzip levels: {gzip_levels}")
+    print(f"🗜️  Brotli qualities: {brotli_qualities}")
     print(f"✨ Enhanced metrics: Payload sizing, MSE, optimization, determinism, fault injection")
     
     all_results = {}
@@ -1337,17 +1368,19 @@ def run_benchmark_suite(
             results.append(result)
             
             # Gzip
-            print(f"  - Running Gzip (Level {gzip_level})...")
-            result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
-            result.dataset_type = dataset_name
-            results.append(result)
+            for level in gzip_levels:
+                print(f"  - Running Gzip (L{level})...")
+                result = BenchmarkRunner.benchmark_gzip(data, level=level)
+                result.dataset_type = dataset_name
+                results.append(result)
             
             # Brotli
             if HAS_BROTLI:
-                print(f"  - Running Brotli (Quality {brotli_quality})...")
-                result = BenchmarkRunner.benchmark_brotli(data, quality=brotli_quality)
-                result.dataset_type = dataset_name
-                results.append(result)
+                for quality in brotli_qualities:
+                    print(f"  - Running Brotli (Q{quality})...")
+                    result = BenchmarkRunner.benchmark_brotli(data, quality=quality)
+                    result.dataset_type = dataset_name
+                    results.append(result)
             
             all_results[f"small_{dataset_name}"] = results
             ResultFormatter.print_table(results, f"small_{dataset_name}")
@@ -1396,17 +1429,19 @@ def run_benchmark_suite(
             results.append(result)
 
             # Gzip
-            print(f"  - Running Gzip (Level {gzip_level})...")
-            result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
-            result.dataset_type = dataset_name
-            results.append(result)
+            for level in gzip_levels:
+                print(f"  - Running Gzip (L{level})...")
+                result = BenchmarkRunner.benchmark_gzip(data, level=level)
+                result.dataset_type = dataset_name
+                results.append(result)
             
             # Brotli
             if HAS_BROTLI:
-                print(f"  - Running Brotli (Quality {brotli_quality})...")
-                result = BenchmarkRunner.benchmark_brotli(data, quality=brotli_quality)
-                result.dataset_type = dataset_name
-                results.append(result)
+                for quality in brotli_qualities:
+                    print(f"  - Running Brotli (Q{quality})...")
+                    result = BenchmarkRunner.benchmark_brotli(data, quality=quality)
+                    result.dataset_type = dataset_name
+                    results.append(result)
             
             all_results[f"large_{dataset_name}"] = results
             ResultFormatter.print_table(results, f"large_{dataset_name}")
@@ -1447,17 +1482,19 @@ def run_benchmark_suite(
             
             # Gzip (only for non-empty data)
             if len(data) > 0:
-                print(f"  - Running Gzip (Level {gzip_level})...")
-                result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
-                result.dataset_type = dataset_name
-                results.append(result)
+                for level in gzip_levels:
+                    print(f"  - Running Gzip (L{level})...")
+                    result = BenchmarkRunner.benchmark_gzip(data, level=level)
+                    result.dataset_type = dataset_name
+                    results.append(result)
             
             # Brotli (only for non-empty data)
             if HAS_BROTLI and len(data) > 0:
-                print(f"  - Running Brotli (Quality {brotli_quality})...")
-                result = BenchmarkRunner.benchmark_brotli(data, quality=brotli_quality)
-                result.dataset_type = dataset_name
-                results.append(result)
+                for quality in brotli_qualities:
+                    print(f"  - Running Brotli (Q{quality})...")
+                    result = BenchmarkRunner.benchmark_brotli(data, quality=quality)
+                    result.dataset_type = dataset_name
+                    results.append(result)
             
             all_results[f"tiny_{dataset_name}"] = results
             ResultFormatter.print_table(results, f"tiny_{dataset_name}")
@@ -1501,10 +1538,11 @@ def run_benchmark_suite(
             
             # Only test gzip on smaller extreme datasets to avoid timeout
             if size_mb <= 10:  # Only test datasets <= 10MB with gzip
-                print(f"  - Running Gzip (Level {gzip_level})...")
-                result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
-                result.dataset_type = dataset_name
-                results.append(result)
+                for level in gzip_levels:
+                    print(f"  - Running Gzip (L{level})...")
+                    result = BenchmarkRunner.benchmark_gzip(data, level=level)
+                    result.dataset_type = dataset_name
+                    results.append(result)
             else:
                 print("  - Skipping Gzip (dataset too large)")
             
@@ -1628,19 +1666,21 @@ def run_benchmark_suite(
                                 
                                 # Run Gzip (skip for huge datasets to avoid timeouts)
                                 if tier_name != 'huge' and actual_size <= 50 * 1024 * 1024:  # Skip > 50MB
-                                    print(f"  - Running Gzip (Level {gzip_level})...")
-                                    result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
-                                    result.dataset_type = tiered_dataset_name
-                                    results.append(result)
+                                    for level in gzip_levels:
+                                        print(f"  - Running Gzip (L{level})...")
+                                        result = BenchmarkRunner.benchmark_gzip(data, level=level)
+                                        result.dataset_type = tiered_dataset_name
+                                        results.append(result)
                                 else:
                                     print(f"  - Skipping Gzip (tier too large: {tier_name})")
                                 
                                 # Run Brotli (only for small/medium datasets due to performance)
                                 if HAS_BROTLI and tier_info.max <= 10 * 1024 * 1024:  # Skip > 10MB
-                                    print(f"  - Running Brotli (Quality {brotli_quality})...")
-                                    result = BenchmarkRunner.benchmark_brotli(data, quality=brotli_quality)
-                                    result.dataset_type = tiered_dataset_name
-                                    results.append(result)
+                                    for quality in brotli_qualities:
+                                        print(f"  - Running Brotli (Q{quality})...")
+                                        result = BenchmarkRunner.benchmark_brotli(data, quality=quality)
+                                        result.dataset_type = tiered_dataset_name
+                                        results.append(result)
                                 else:
                                     print(f"  - Skipping Brotli (tier too large: {tier_name})")
                                 
@@ -1812,14 +1852,31 @@ Examples:
         help="Gzip compression level (1-9)"
     )
     parser.add_argument(
+        "--gzip-levels",
+        type=int,
+        nargs='+',
+        choices=range(1, 10),
+        help="Gzip compression levels to sweep in a single run (e.g. --gzip-levels 1 6 9). Overrides --gzip-level."
+    )
+    parser.add_argument(
         "--brotli-quality",
         type=int,
         default=6,
         choices=range(0, 12),
         help="Brotli compression quality (0-11)"
     )
+    parser.add_argument(
+        "--brotli-qualities",
+        type=int,
+        nargs='+',
+        choices=range(0, 12),
+        help="Brotli compression qualities to sweep in a single run (e.g. --brotli-qualities 4 6 11). Overrides --brotli-quality."
+    )
     
     args = parser.parse_args()
+
+    gzip_levels = args.gzip_levels if args.gzip_levels is not None else [args.gzip_level]
+    brotli_qualities = args.brotli_qualities if args.brotli_qualities is not None else [args.brotli_quality]
     
     # Determine which datasets to run
     small = not (args.large_only or args.tiny_only or args.extreme_only or args.all_tiers or args.tiers)
@@ -1864,8 +1921,8 @@ Examples:
         print(f"  Specific categories: {specific_categories}")
     print(f"  Real datasets: {'✅' if use_real else 'Synthetic' if use_real is False else 'Auto-detect'}")
     print(f"  Enhanced verification: ✅")
-    print(f"  Gzip Level: {args.gzip_level}")
-    print(f"  Brotli Quality: {args.brotli_quality}")
+    print(f"  Gzip Levels: {gzip_levels}")
+    print(f"  Brotli Qualities: {brotli_qualities}")
     
     run_benchmark_suite(
         small_datasets=small,
@@ -1879,5 +1936,7 @@ Examples:
         output_dir=args.output_dir,
         use_real_datasets=use_real,
         gzip_level=args.gzip_level,
-        brotli_quality=args.brotli_quality
+        brotli_quality=args.brotli_quality,
+        gzip_levels=gzip_levels,
+        brotli_qualities=brotli_qualities
     )
