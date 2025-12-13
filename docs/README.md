@@ -13,12 +13,13 @@ Welcome to the comprehensive documentation for Frackture, the unified symbolic c
 
 ### Technical Documentation
 - **[Architecture](./ARCHITECTURE.md)** - Deep dive into dual-channel design, algorithms, and implementation
+- **[Benchmarking](./BENCHMARKING.md)** - Complete methodology, metrics definitions, and interpretation guide
 - **[Security](./SECURITY.md)** - Security properties, threat model, and best practices
 
 ### Verification & Performance
 - **[Test Report](../TEST_REPORT.md)** - Comprehensive test coverage and results
 - **[Benchmark Summary](../BENCHMARK_SUITE_SUMMARY.md)** - Performance comparisons vs gzip/brotli
-- **[Benchmark Suite](../benchmarks/README.md)** - How to run and interpret benchmarks
+- **[Benchmark Suite](../benchmarks/README.md)** - How to run benchmarks, CLI options, and troubleshooting
 
 ---
 
@@ -36,7 +37,7 @@ Welcome to the comprehensive documentation for Frackture, the unified symbolic c
 → Read [Security](./SECURITY.md) and [Examples - Encryption section](./EXAMPLES.md#encryption--decryption)
 
 **...see performance data**
-→ Check [Benchmark Summary](../BENCHMARK_SUITE_SUMMARY.md)
+→ Check [Benchmarking Guide](./BENCHMARKING.md) or [Benchmark Summary](../BENCHMARK_SUITE_SUMMARY.md)
 
 **...troubleshoot issues**
 → Check [FAQ - Troubleshooting](./FAQ.md#troubleshooting)
@@ -62,6 +63,18 @@ Deep technical dive into Frackture's design:
 - Performance characteristics
 
 **Read if:** You want to understand implementation details or contribute.
+
+### [BENCHMARKING.md](./BENCHMARKING.md)
+Complete benchmarking methodology and interpretation:
+- Real dataset repository (15+ datasets)
+- Comprehensive metrics (payload sizing, MSE, determinism, fault injection)
+- Running benchmarks (CLI options, size tiers, verification mode)
+- Interpreting results (compression ratios, throughput, MSE analysis)
+- What Frackture optimizes for (fingerprinting, ML embeddings, fast decode)
+- Comparison targets (when to use vs gzip/brotli)
+- Advanced scenarios (>100 MB testing, streaming API)
+
+**Read if:** You want to understand performance characteristics or run comparative benchmarks.
 
 ### [SECURITY.md](./SECURITY.md)
 Comprehensive security analysis:
@@ -142,7 +155,9 @@ Frequently asked questions:
 - **[Security - Threat Model](./SECURITY.md#threat-model)**
 
 ### Performance Analysis
-- **[Benchmark Suite Summary](../BENCHMARK_SUITE_SUMMARY.md)**
+- **[Benchmarking Guide](./BENCHMARKING.md)** - Complete methodology and interpretation
+- **[Benchmark Suite Summary](../BENCHMARK_SUITE_SUMMARY.md)** - Implementation summary and key findings
+- **[Benchmark Suite README](../benchmarks/README.md)** - Running benchmarks and CLI options
 - **[Architecture - Performance Characteristics](./ARCHITECTURE.md#performance-characteristics)**
 - **[FAQ - Performance Questions](./FAQ.md#performance-questions)**
 
