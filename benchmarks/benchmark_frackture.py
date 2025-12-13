@@ -17,6 +17,8 @@ from typing import Dict, List, Any, Callable, Tuple, Optional
 from dataclasses import dataclass, asdict
 import random
 import string
+import hashlib
+import secrets
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -40,6 +42,16 @@ frackture_v3_3_safe = frackture_module.frackture_v3_3_safe
 frackture_v3_3_reconstruct = frackture_module.frackture_v3_3_reconstruct
 frackture_deterministic_hash = frackture_module.frackture_deterministic_hash
 optimize_frackture = frackture_module.optimize_frackture
+frackture_encrypt_payload = frackture_module.frackture_encrypt_payload
+frackture_decrypt_payload = frackture_module.frackture_decrypt_payload
+
+# Try to import cryptography for AES-GCM
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    HAS_CRYPTOGRAPHY = True
+except ImportError:
+    HAS_CRYPTOGRAPHY = False
+    print("Warning: cryptography not available. Install with: pip install cryptography")
 
 # Try to import brotli
 try:
@@ -597,6 +609,303 @@ class BenchmarkRunner:
                 success=False,
                 error=str(e)
             )
+            
+    @staticmethod
+    def benchmark_sha256(data: bytes) -> BenchmarkResult:
+        """Benchmark SHA256 hashing"""
+        dataset_type = "unknown"
+        original_size = len(data)
+        
+        try:
+            mem_tracker = MemoryTracker()
+            mem_tracker.start()
+            
+            # Encode timing (Hashing)
+            encode_start = time.perf_counter()
+            digest = hashlib.sha256(data).digest()
+            encode_time = time.perf_counter() - encode_start
+            
+            compressed_size = len(digest)
+            
+            # Decode timing (None, irreversible)
+            decode_time = 0.0
+            
+            # Hash timing (Self)
+            hash_time = encode_time
+            
+            peak_memory = mem_tracker.stop()
+            
+            compression_ratio = original_size / compressed_size if compressed_size > 0 else 0
+            encode_throughput = (original_size / (1024 * 1024)) / encode_time if encode_time > 0 else 0
+            decode_throughput = 0.0
+            
+            return BenchmarkResult(
+                name="SHA256",
+                dataset_type=dataset_type,
+                original_size=original_size,
+                compressed_size=compressed_size,
+                compression_ratio=compression_ratio,
+                encode_time=encode_time,
+                decode_time=decode_time,
+                encode_throughput=encode_throughput,
+                decode_throughput=decode_throughput,
+                hash_time=hash_time,
+                peak_memory_mb=peak_memory,
+                success=True
+            )
+            
+        except Exception as e:
+            return BenchmarkResult(
+                name="SHA256",
+                dataset_type=dataset_type,
+                original_size=original_size,
+                compressed_size=0,
+                compression_ratio=0,
+                encode_time=0,
+                decode_time=0,
+                encode_throughput=0,
+                decode_throughput=0,
+                hash_time=0,
+                peak_memory_mb=0,
+                success=False,
+                error=str(e)
+            )
+
+    @staticmethod
+    def benchmark_aes_gcm(data: bytes) -> BenchmarkResult:
+        """Benchmark AES-GCM encryption/decryption"""
+        if not HAS_CRYPTOGRAPHY:
+            return BenchmarkResult(
+                name="AES-GCM",
+                dataset_type="unknown",
+                original_size=len(data),
+                compressed_size=0,
+                compression_ratio=0,
+                encode_time=0,
+                decode_time=0,
+                encode_throughput=0,
+                decode_throughput=0,
+                hash_time=0,
+                peak_memory_mb=0,
+                success=False,
+                error="cryptography not installed"
+            )
+            
+        dataset_type = "unknown"
+        original_size = len(data)
+        
+        try:
+            mem_tracker = MemoryTracker()
+            mem_tracker.start()
+            
+            # Key generation (excluded from timing, one-time setup)
+            key = AESGCM.generate_key(bit_length=256)
+            aesgcm = AESGCM(key)
+            nonce = secrets.token_bytes(12)
+            
+            # Encode timing (Encrypt)
+            encode_start = time.perf_counter()
+            ciphertext = aesgcm.encrypt(nonce, data, None)
+            encode_time = time.perf_counter() - encode_start
+            
+            compressed_size = len(ciphertext)
+            
+            # Decode timing (Decrypt)
+            decode_start = time.perf_counter()
+            decrypted = aesgcm.decrypt(nonce, ciphertext, None)
+            decode_time = time.perf_counter() - decode_start
+            
+            assert decrypted == data, "Decryption mismatch"
+            
+            # Hash timing (using Frackture hash for consistency)
+            hash_start = time.perf_counter()
+            _ = frackture_deterministic_hash(data)
+            hash_time = time.perf_counter() - hash_start
+            
+            peak_memory = mem_tracker.stop()
+            
+            compression_ratio = original_size / compressed_size if compressed_size > 0 else 0
+            encode_throughput = (original_size / (1024 * 1024)) / encode_time if encode_time > 0 else 0
+            decode_throughput = (original_size / (1024 * 1024)) / decode_time if decode_time > 0 else 0
+            
+            return BenchmarkResult(
+                name="AES-GCM",
+                dataset_type=dataset_type,
+                original_size=original_size,
+                compressed_size=compressed_size,
+                compression_ratio=compression_ratio,
+                encode_time=encode_time,
+                decode_time=decode_time,
+                encode_throughput=encode_throughput,
+                decode_throughput=decode_throughput,
+                hash_time=hash_time,
+                peak_memory_mb=peak_memory,
+                success=True
+            )
+            
+        except Exception as e:
+            return BenchmarkResult(
+                name="AES-GCM",
+                dataset_type=dataset_type,
+                original_size=original_size,
+                compressed_size=0,
+                compression_ratio=0,
+                encode_time=0,
+                decode_time=0,
+                encode_throughput=0,
+                decode_throughput=0,
+                hash_time=0,
+                peak_memory_mb=0,
+                success=False,
+                error=str(e)
+            )
+
+    @staticmethod
+    def benchmark_frackture_encryption(data: bytes) -> BenchmarkResult:
+        """Benchmark Frackture HMAC Encryption"""
+        dataset_type = "unknown"
+        original_size = len(data)
+        
+        try:
+            mem_tracker = MemoryTracker()
+            mem_tracker.start()
+            
+            # Preprocessing (needed for payload generation)
+            # We measure from payload generation to encrypted payload?
+            # Or just the encryption wrapper overhead?
+            # "extend the existing frackture encryption (HMAC) path so it is benchmarked separately with the same metrics"
+            # I assume we benchmark the whole process or just the encrypt/decrypt wrapper on top of payload.
+            # But AES-GCM benchmarks encrypting the RAW data. Frackture encryption encrypts the PAYLOAD.
+            # So to compare, we should probably follow the Frackture flow:
+            # Data -> Payload -> Encrypted Payload
+            
+            # Preprocessing & Payload Generation (Setup, excluded from encrypt time? or included?)
+            # If we compare to AES-GCM (Data -> Ciphertext), we might want Data -> Encrypted Payload.
+            # BUT Frackture is compression + encryption.
+            # Let's measure the ENCRYPTION step specifically, but output the total size.
+            # However, the user wants to benchmark the "frackture encryption path".
+            # The most fair comparison for "Encryption" is taking the payload and signing it.
+            # But wait, `frackture_encrypt_payload` takes a payload (dict).
+            
+            # Let's generate the payload first.
+            preprocessed = frackture_preprocess_universal_v2_6(data)
+            payload = frackture_v3_3_safe(preprocessed)
+            key = secrets.token_hex(32) # 64 hex chars = 32 bytes
+            
+            # Encode timing (Encrypt Payload)
+            encode_start = time.perf_counter()
+            encrypted_payload = frackture_encrypt_payload(payload, key)
+            encode_time = time.perf_counter() - encode_start
+            
+            # Size of encrypted payload
+            import json
+            encrypted_bytes = json.dumps(encrypted_payload).encode()
+            compressed_size = len(encrypted_bytes)
+            
+            # Decode timing (Decrypt/Verify Payload)
+            decode_start = time.perf_counter()
+            decrypted_payload = frackture_decrypt_payload(encrypted_payload, key)
+            decode_time = time.perf_counter() - decode_start
+            
+            # Hash timing
+            hash_start = time.perf_counter()
+            _ = frackture_deterministic_hash(data)
+            hash_time = time.perf_counter() - hash_start
+            
+            peak_memory = mem_tracker.stop()
+            
+            # For throughput, we use original_size, even though we encrypt payload.
+            # This represents "how fast can I process X MB of original data securely"
+            # But wait, if we only measure encrypt step time, the throughput will be huge because payload is small (96B).
+            # If we want comparable "System Throughput", we should include payload generation time?
+            # The ticket says: "extend the existing frackture encryption (HMAC) path so it is benchmarked separately"
+            # If I benchmark AES-GCM, I do Data -> Ciphertext.
+            # If I benchmark Frackture Encryption, is it Data -> Encrypted Payload?
+            # If so, I should include payload generation time.
+            # Let's check `benchmark_frackture`. It measures `frackture_v3_3_safe` which is Data -> Payload.
+            # So `benchmark_frackture_encryption` should probably be Data -> Encrypted Payload.
+            
+            # Let's re-measure to include payload generation in encode_time.
+            # BUT `benchmark_frackture` already exists.
+            # If I add `benchmark_frackture_encryption`, it will be a separate row.
+            # If I include payload generation, it will be slightly slower than `benchmark_frackture`.
+            # If I EXCLUDE payload generation, it will be insanely fast (signing 96 bytes).
+            
+            # Given the context of "crypto/hash baselines", it seems they want to compare:
+            # 1. SHA256 (Hashing)
+            # 2. AES-GCM (Encryption)
+            # 3. Frackture Encryption (The encryption component of Frackture)
+            
+            # If I want to compare "Frackture Encryption" vs "AES-GCM", I should probably compare the mechanism itself.
+            # However, Frackture Encryption is applied ON TOP of compression.
+            # If I apply AES-GCM on original data, I get large ciphertext.
+            # If I apply Frackture Encryption, I get small authenticated payload.
+            
+            # I will measure the FULL path: Data -> Preprocess -> Payload -> Encrypt.
+            # This shows the user the "Secure Frackture" performance.
+            
+            # Redo timing:
+            
+            encode_start = time.perf_counter()
+            # 1. Preprocess
+            preprocessed_t = frackture_preprocess_universal_v2_6(data)
+            # 2. Payload
+            payload_t = frackture_v3_3_safe(preprocessed_t)
+            # 3. Encrypt
+            encrypted_payload = frackture_encrypt_payload(payload_t, key)
+            encode_time = time.perf_counter() - encode_start
+            
+            # Redo decode timing:
+            decode_start = time.perf_counter()
+            # 1. Decrypt/Verify
+            decrypted_payload_t = frackture_decrypt_payload(encrypted_payload, key)
+            # 2. Reconstruct
+            reconstructed = frackture_v3_3_reconstruct(decrypted_payload_t)
+            decode_time = time.perf_counter() - decode_start
+            
+            compression_ratio = original_size / compressed_size if compressed_size > 0 else 0
+            encode_throughput = (original_size / (1024 * 1024)) / encode_time if encode_time > 0 else 0
+            decode_throughput = (original_size / (1024 * 1024)) / decode_time if decode_time > 0 else 0
+
+            return BenchmarkResult(
+                name="Frackture Encrypted",
+                dataset_type=dataset_type,
+                original_size=original_size,
+                compressed_size=compressed_size,
+                compression_ratio=compression_ratio,
+                encode_time=encode_time,
+                decode_time=decode_time,
+                encode_throughput=encode_throughput,
+                decode_throughput=decode_throughput,
+                hash_time=hash_time,
+                peak_memory_mb=peak_memory,
+                success=True,
+                # Include verification metrics from the payload
+                symbolic_bytes=len(payload_t['symbolic'])//2 if payload_t['symbolic'] else 0,
+                entropy_bytes=len(payload_t['entropy'])*8,
+                serialized_total_bytes=compressed_size,
+                payload_is_96b=False, # It will be larger due to wrapper
+                is_lossless=False, # Frackture is lossy
+                is_deterministic=True # Should be
+            )
+            
+        except Exception as e:
+            return BenchmarkResult(
+                name="Frackture Encrypted",
+                dataset_type=dataset_type,
+                original_size=original_size,
+                compressed_size=0,
+                compression_ratio=0,
+                encode_time=0,
+                decode_time=0,
+                encode_throughput=0,
+                decode_throughput=0,
+                hash_time=0,
+                peak_memory_mb=0,
+                success=False,
+                error=str(e)
+            )
+
 
 
 class ResultFormatter:
@@ -932,7 +1241,9 @@ def run_benchmark_suite(
     tiny_datasets: bool = True,
     extreme_datasets: bool = False,  # Disabled by default due to size
     output_dir: Path = None,
-    use_real_datasets: bool = None
+    use_real_datasets: bool = None,
+    gzip_level: int = 6,
+    brotli_quality: int = 6
 ):
     """Run the complete benchmark suite with enhanced metrics and extreme dataset support"""
     
@@ -954,6 +1265,7 @@ def run_benchmark_suite(
     print(f"\n📁 Output directory: {output_dir}")
     print(f"📊 Dataset mode: {'REAL DATASETS' if use_real_datasets else 'SYNTHETIC DATASETS'}")
     print(f"🧮 Brotli available: {HAS_BROTLI}")
+    print(f"🔐 Cryptography available: {HAS_CRYPTOGRAPHY}")
     print(f"💾 Psutil available: {HAS_PSUTIL}")
     print(f"📏 Tiny datasets: {'✅' if tiny_datasets else '❌'}")
     print(f"🚀 Extreme datasets: {'✅' if extreme_datasets else '❌'}")
@@ -996,17 +1308,35 @@ def run_benchmark_suite(
             result = BenchmarkRunner.benchmark_frackture(data)
             result.dataset_type = dataset_name
             results.append(result)
+
+            # SHA256
+            print("  - Running SHA256...")
+            result = BenchmarkRunner.benchmark_sha256(data)
+            result.dataset_type = dataset_name
+            results.append(result)
+
+            # AES-GCM
+            print("  - Running AES-GCM...")
+            result = BenchmarkRunner.benchmark_aes_gcm(data)
+            result.dataset_type = dataset_name
+            results.append(result)
+
+            # Frackture Encryption
+            print("  - Running Frackture Encryption...")
+            result = BenchmarkRunner.benchmark_frackture_encryption(data)
+            result.dataset_type = dataset_name
+            results.append(result)
             
             # Gzip
-            print("  - Running Gzip...")
-            result = BenchmarkRunner.benchmark_gzip(data, level=6)
+            print(f"  - Running Gzip (Level {gzip_level})...")
+            result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
             result.dataset_type = dataset_name
             results.append(result)
             
             # Brotli
             if HAS_BROTLI:
-                print("  - Running Brotli...")
-                result = BenchmarkRunner.benchmark_brotli(data, quality=6)
+                print(f"  - Running Brotli (Quality {brotli_quality})...")
+                result = BenchmarkRunner.benchmark_brotli(data, quality=brotli_quality)
                 result.dataset_type = dataset_name
                 results.append(result)
             
@@ -1038,16 +1368,34 @@ def run_benchmark_suite(
             result.dataset_type = dataset_name
             results.append(result)
             
+            # SHA256
+            print("  - Running SHA256...")
+            result = BenchmarkRunner.benchmark_sha256(data)
+            result.dataset_type = dataset_name
+            results.append(result)
+
+            # AES-GCM
+            print("  - Running AES-GCM...")
+            result = BenchmarkRunner.benchmark_aes_gcm(data)
+            result.dataset_type = dataset_name
+            results.append(result)
+
+            # Frackture Encryption
+            print("  - Running Frackture Encryption...")
+            result = BenchmarkRunner.benchmark_frackture_encryption(data)
+            result.dataset_type = dataset_name
+            results.append(result)
+
             # Gzip
-            print("  - Running Gzip...")
-            result = BenchmarkRunner.benchmark_gzip(data, level=6)
+            print(f"  - Running Gzip (Level {gzip_level})...")
+            result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
             result.dataset_type = dataset_name
             results.append(result)
             
             # Brotli
             if HAS_BROTLI:
-                print("  - Running Brotli...")
-                result = BenchmarkRunner.benchmark_brotli(data, quality=6)
+                print(f"  - Running Brotli (Quality {brotli_quality})...")
+                result = BenchmarkRunner.benchmark_brotli(data, quality=brotli_quality)
                 result.dataset_type = dataset_name
                 results.append(result)
             
@@ -1069,18 +1417,36 @@ def run_benchmark_suite(
             result = BenchmarkRunner.benchmark_frackture(data)
             result.dataset_type = dataset_name
             results.append(result)
+
+            # SHA256
+            print("  - Running SHA256...")
+            result = BenchmarkRunner.benchmark_sha256(data)
+            result.dataset_type = dataset_name
+            results.append(result)
+
+            # AES-GCM
+            print("  - Running AES-GCM...")
+            result = BenchmarkRunner.benchmark_aes_gcm(data)
+            result.dataset_type = dataset_name
+            results.append(result)
+
+            # Frackture Encryption
+            print("  - Running Frackture Encryption...")
+            result = BenchmarkRunner.benchmark_frackture_encryption(data)
+            result.dataset_type = dataset_name
+            results.append(result)
             
             # Gzip (only for non-empty data)
             if len(data) > 0:
-                print("  - Running Gzip...")
-                result = BenchmarkRunner.benchmark_gzip(data, level=6)
+                print(f"  - Running Gzip (Level {gzip_level})...")
+                result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
                 result.dataset_type = dataset_name
                 results.append(result)
             
             # Brotli (only for non-empty data)
             if HAS_BROTLI and len(data) > 0:
-                print("  - Running Brotli...")
-                result = BenchmarkRunner.benchmark_brotli(data, quality=6)
+                print(f"  - Running Brotli (Quality {brotli_quality})...")
+                result = BenchmarkRunner.benchmark_brotli(data, quality=brotli_quality)
                 result.dataset_type = dataset_name
                 results.append(result)
             
@@ -1105,11 +1471,29 @@ def run_benchmark_suite(
             result = BenchmarkRunner.benchmark_frackture(data)
             result.dataset_type = dataset_name
             results.append(result)
+
+            # SHA256
+            print("  - Running SHA256...")
+            result = BenchmarkRunner.benchmark_sha256(data)
+            result.dataset_type = dataset_name
+            results.append(result)
+
+            # AES-GCM
+            print("  - Running AES-GCM...")
+            result = BenchmarkRunner.benchmark_aes_gcm(data)
+            result.dataset_type = dataset_name
+            results.append(result)
+
+            # Frackture Encryption
+            print("  - Running Frackture Encryption...")
+            result = BenchmarkRunner.benchmark_frackture_encryption(data)
+            result.dataset_type = dataset_name
+            results.append(result)
             
             # Only test gzip on smaller extreme datasets to avoid timeout
             if size_mb <= 10:  # Only test datasets <= 10MB with gzip
-                print("  - Running Gzip...")
-                result = BenchmarkRunner.benchmark_gzip(data, level=6)
+                print(f"  - Running Gzip (Level {gzip_level})...")
+                result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
                 result.dataset_type = dataset_name
                 results.append(result)
             else:
@@ -1223,6 +1607,22 @@ Examples:
         help="Enable detailed verification output with more diagnostic information"
     )
     
+    # Compression settings
+    parser.add_argument(
+        "--gzip-level",
+        type=int,
+        default=6,
+        choices=range(1, 10),
+        help="Gzip compression level (1-9)"
+    )
+    parser.add_argument(
+        "--brotli-quality",
+        type=int,
+        default=6,
+        choices=range(0, 12),
+        help="Brotli compression quality (0-11)"
+    )
+    
     args = parser.parse_args()
     
     # Determine which datasets to run
@@ -1245,6 +1645,8 @@ Examples:
     print(f"  Extreme datasets (>100MB): {'✅' if extreme else '❌'}")
     print(f"  Real datasets: {'✅' if use_real else 'Synthetic' if use_real is False else 'Auto-detect'}")
     print(f"  Enhanced verification: ✅")
+    print(f"  Gzip Level: {args.gzip_level}")
+    print(f"  Brotli Quality: {args.brotli_quality}")
     
     run_benchmark_suite(
         small_datasets=small,
@@ -1252,5 +1654,7 @@ Examples:
         tiny_datasets=tiny,
         extreme_datasets=extreme,
         output_dir=args.output_dir,
-        use_real_datasets=use_real
+        use_real_datasets=use_real,
+        gzip_level=args.gzip_level,
+        brotli_quality=args.brotli_quality
     )

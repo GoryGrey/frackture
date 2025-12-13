@@ -47,6 +47,7 @@ pip install frackture
 **Requirements:**
 - Python 3.8+
 - numpy, scipy, scikit-learn (installed automatically)
+- cryptography (optional, for benchmark comparisons)
 
 ---
 
@@ -490,7 +491,7 @@ See [TEST_REPORT.md](./TEST_REPORT.md) for detailed test results.
 
 ## 📊 Benchmarks
 
-Compare Frackture against gzip and brotli using real-world datasets:
+Compare Frackture against gzip, brotli, SHA256, and AES-GCM using real-world datasets:
 
 ```bash
 cd benchmarks
