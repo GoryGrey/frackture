@@ -50,6 +50,8 @@ htmlcov/
 # Benchmark results
 benchmarks/results/*.json
 benchmarks/results/*.md
+benchmarks/analysis/*.json
+benchmarks/analysis/*.md
 
 # Keep the results directory but not the files
 !benchmarks/results/.gitkeep
