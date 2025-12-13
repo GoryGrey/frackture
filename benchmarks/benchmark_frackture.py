@@ -99,6 +99,11 @@ class BenchmarkResult:
     determinism_drifts: int = 0
     fault_injection_passed: bool = False
     fault_injection_errors: Optional[List[str]] = None
+    # Tier metadata (added for full-tier benchmarks)
+    tier_name: Optional[str] = None
+    category_name: Optional[str] = None
+    actual_size_bytes: Optional[int] = None
+    target_size_bytes: Optional[int] = None
 
 
 class DatasetGenerator:
@@ -1240,6 +1245,10 @@ def run_benchmark_suite(
     large_datasets: bool = True,
     tiny_datasets: bool = True,
     extreme_datasets: bool = False,  # Disabled by default due to size
+    all_tiers: bool = False,
+    specific_tiers: Optional[List[str]] = None,
+    include_huge: bool = False,
+    specific_categories: Optional[List[str]] = None,
     output_dir: Path = None,
     use_real_datasets: bool = None,
     gzip_level: int = 6,
@@ -1505,6 +1514,167 @@ def run_benchmark_suite(
             all_results[f"extreme_{dataset_name}"] = results
             ResultFormatter.print_table(results, f"extreme_{dataset_name}")
     
+    # Run full-tier benchmarks (all categories × all tiers)
+    if all_tiers or specific_tiers:
+        print("\n🎯 Running full-tier benchmarks across all categories and size tiers...")
+        
+        if not use_real_datasets:
+            print("✗ Full-tier benchmarks require real datasets")
+            print("  Falling back to synthetic datasets")
+            all_tiers = False
+            specific_tiers = None
+        elif not repo:
+            print("✗ Dataset repository not available")
+            all_tiers = False
+            specific_tiers = None
+        else:
+            try:
+                # Determine which tiers to run
+                if all_tiers:
+                    tier_names = repo.list_size_tiers()
+                    if not include_huge:
+                        tier_names = [t for t in tier_names if not repo.size_tiers[t].optional]
+                elif specific_tiers:
+                    tier_names = []
+                    for tier in specific_tiers:
+                        if tier in repo.size_tiers:
+                            if not repo.size_tiers[tier].optional or include_huge:
+                                tier_names.append(tier)
+                        else:
+                            print(f"  ⚠️  Unknown tier: {tier}, skipping")
+                
+                # Determine which categories to run
+                if specific_categories:
+                    category_names = []
+                    available_categories = set(repo.list_categories())
+                    for category in specific_categories:
+                        if category in available_categories:
+                            category_names.append(category)
+                        else:
+                            print(f"  ⚠️  Unknown category: {category}, skipping")
+                else:
+                    category_names = repo.list_categories()
+                
+                print(f"  📏 Running tiers: {tier_names}")
+                print(f"  📂 Running categories: {category_names}")
+                print(f"  🎯 Total combinations: {len(tier_names)} tiers × {len(category_names)} categories = {len(tier_names) * len(category_names)} tests")
+                
+                # Track statistics
+                total_tests = 0
+                successful_tests = 0
+                failed_tests = 0
+                
+                for tier_name in tier_names:
+                    tier_info = repo.size_tiers[tier_name]
+                    print(f"\n📊 Processing tier: {tier_name} (target: {tier_info.target:,} bytes)")
+                    
+                    for category_name in category_names:
+                        # Get datasets in this category
+                        dataset_names = repo.get_datasets_by_category(category_name)
+                        if not dataset_names:
+                            print(f"  ⚠️  No datasets found for category: {category_name}")
+                            continue
+                        
+                        for dataset_name in dataset_names:
+                            try:
+                                # Skip optional datasets that don't exist
+                                dataset_info = repo.datasets[dataset_name]
+                                if dataset_info.optional:
+                                    file_path = repo.datasets_dir / dataset_info.file
+                                    if not file_path.exists():
+                                        continue
+                                
+                                total_tests += 1
+                                
+                                # Load dataset at this tier
+                                data = repo.load_by_tier(dataset_name, tier_name)
+                                
+                                # Create tiered dataset name
+                                tiered_dataset_name = f"{dataset_name}_{tier_name}"
+                                actual_size = len(data)
+                                
+                                print(f"\n🔍 Benchmarking {category_name}/{tier_name}: {dataset_name} ({actual_size:,} bytes)")
+                                results = []
+                                
+                                # Run Frackture (always included)
+                                print("  - Running Frackture...")
+                                result = BenchmarkRunner.benchmark_frackture(data)
+                                result.dataset_type = tiered_dataset_name
+                                results.append(result)
+                                
+                                if result.success:
+                                    successful_tests += 1
+                                else:
+                                    failed_tests += 1
+                                    print(f"    ❌ Frackture failed: {result.error}")
+                                
+                                # Run SHA256
+                                print("  - Running SHA256...")
+                                result = BenchmarkRunner.benchmark_sha256(data)
+                                result.dataset_type = tiered_dataset_name
+                                results.append(result)
+                                
+                                # Run AES-GCM
+                                print("  - Running AES-GCM...")
+                                result = BenchmarkRunner.benchmark_aes_gcm(data)
+                                result.dataset_type = tiered_dataset_name
+                                results.append(result)
+                                
+                                # Run Frackture Encryption
+                                print("  - Running Frackture Encryption...")
+                                result = BenchmarkRunner.benchmark_frackture_encryption(data)
+                                result.dataset_type = tiered_dataset_name
+                                results.append(result)
+                                
+                                # Run Gzip (skip for huge datasets to avoid timeouts)
+                                if tier_name != 'huge' and actual_size <= 50 * 1024 * 1024:  # Skip > 50MB
+                                    print(f"  - Running Gzip (Level {gzip_level})...")
+                                    result = BenchmarkRunner.benchmark_gzip(data, level=gzip_level)
+                                    result.dataset_type = tiered_dataset_name
+                                    results.append(result)
+                                else:
+                                    print(f"  - Skipping Gzip (tier too large: {tier_name})")
+                                
+                                # Run Brotli (only for small/medium datasets due to performance)
+                                if HAS_BROTLI and tier_info.max <= 10 * 1024 * 1024:  # Skip > 10MB
+                                    print(f"  - Running Brotli (Quality {brotli_quality})...")
+                                    result = BenchmarkRunner.benchmark_brotli(data, quality=brotli_quality)
+                                    result.dataset_type = tiered_dataset_name
+                                    results.append(result)
+                                else:
+                                    print(f"  - Skipping Brotli (tier too large: {tier_name})")
+                                
+                                # Store results with tiered naming
+                                all_results[tiered_dataset_name] = results
+                                
+                                # Print summary table for this dataset
+                                ResultFormatter.print_table(results, tiered_dataset_name)
+                                
+                                # Add tier metadata to results for JSON output
+                                for result in results:
+                                    if hasattr(result, 'dataset_type'):
+                                        result.tier_name = tier_name
+                                        result.category_name = category_name
+                                        result.actual_size_bytes = actual_size
+                                        result.target_size_bytes = tier_info.target
+                                
+                            except Exception as e:
+                                failed_tests += 1
+                                print(f"  ❌ Failed to benchmark {dataset_name} at {tier_name}: {e}")
+                                continue
+                
+                # Print summary
+                print(f"\n🎯 Full-tier benchmarks completed:")
+                print(f"  📊 Total tests: {total_tests}")
+                print(f"  ✅ Successful: {successful_tests}")
+                print(f"  ❌ Failed: {failed_tests}")
+                print(f"  📈 Success rate: {(successful_tests/total_tests*100) if total_tests > 0 else 0:.1f}%")
+                
+            except Exception as e:
+                print(f"✗ Error in full-tier benchmarks: {e}")
+                import traceback
+                traceback.print_exc()
+    
     # Save results
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     json_path = output_dir / f"benchmark_results_{timestamp}.json"
@@ -1536,6 +1706,12 @@ Examples:
   %(prog)s --tiny-only              # Run only <100B dataset benchmarks
   %(prog)s --extreme                # Run extreme >100MB dataset benchmarks
   %(prog)s --no-tiny               # Disable tiny dataset tests
+  
+  %(prog)s --all-tiers             # Run all tiers across all categories
+  %(prog)s --all-tiers --categories text,binary  # All tiers, specific categories
+  %(prog)s --tiers tiny,small,medium # Specific tier subset
+  %(prog)s --all-tiers --include-huge  # Include 1GB+ tier
+  
   %(prog)s --synthetic             # Use synthetic datasets only
   %(prog)s --real                  # Use real datasets if available
   %(prog)s --output-dir ./results  # Custom output directory
@@ -1564,6 +1740,16 @@ Examples:
         action="store_true",
         help="Run only extreme dataset benchmarks (>100MB)"
     )
+    dataset_group.add_argument(
+        "--all-tiers",
+        action="store_true",
+        help="Run benchmarks across all size tiers (tiny → huge) for real datasets"
+    )
+    dataset_group.add_argument(
+        "--tiers",
+        type=str,
+        help="Run benchmarks on specific tiers (e.g., 'tiny,small,medium,large')"
+    )
     
     # Additional dataset options
     parser.add_argument(
@@ -1575,6 +1761,16 @@ Examples:
         "--extreme",
         action="store_true",
         help="Enable extreme dataset benchmarks (>100MB, can be very slow)"
+    )
+    parser.add_argument(
+        "--include-huge",
+        action="store_true",
+        help="Include the huge (1GB+) tier in full-tier benchmarks (optional)"
+    )
+    parser.add_argument(
+        "--categories",
+        type=str,
+        help="Run benchmarks on specific categories (e.g., 'text,binary,code,structured,mixed')"
     )
     
     # Output and mode options
@@ -1626,23 +1822,46 @@ Examples:
     args = parser.parse_args()
     
     # Determine which datasets to run
-    small = not (args.large_only or args.tiny_only or args.extreme_only)
-    large = not (args.small_only or args.tiny_only or args.extreme_only) 
-    tiny = not (args.small_only or args.large_only or args.extreme_only) and not args.no_tiny
+    small = not (args.large_only or args.tiny_only or args.extreme_only or args.all_tiers or args.tiers)
+    large = not (args.small_only or args.tiny_only or args.extreme_only or args.all_tiers or args.tiers)
+    tiny = not (args.small_only or args.large_only or args.extreme_only or args.all_tiers or args.tiers) and not args.no_tiny
     extreme = args.extreme_only or args.extreme
+    
+    # Parse tier selections
+    all_tiers = args.all_tiers
+    specific_tiers = None
+    if args.tiers:
+        specific_tiers = [t.strip() for t in args.tiers.split(',')]
+    include_huge = args.include_huge
+    
+    # Parse category selections
+    specific_categories = None
+    if args.categories:
+        specific_categories = [c.strip() for c in args.categories.split(',')]
     
     # Determine dataset mode
     use_real = None  # Auto-detect
     if args.synthetic:
         use_real = False
-    elif args.real:
-        use_real = True
+    elif args.real or all_tiers or specific_tiers:
+        use_real = True  # Tier-based benchmarks require real datasets
     
     print("\n🚀 Enhanced Frackture Benchmark Configuration:")
     print(f"  Small datasets (100KB): {'✅' if small else '❌'}")
     print(f"  Large datasets (1MB): {'✅' if large else '❌'}")
     print(f"  Tiny datasets (<100B): {'✅' if tiny else '❌'}")
     print(f"  Extreme datasets (>100MB): {'✅' if extreme else '❌'}")
+    if all_tiers:
+        print(f"  All tiers mode: ✅ (FULL-TIER BENCHMARKS)")
+        print(f"  Include huge tier: {'✅' if include_huge else '❌'}")
+    elif specific_tiers:
+        print(f"  Specific tiers mode: ✅")
+        print(f"  Tiers: {specific_tiers}")
+        print(f"  Include huge tier: {'✅' if include_huge else '❌'}")
+    else:
+        print(f"  All tiers mode: ❌")
+    if specific_categories:
+        print(f"  Specific categories: {specific_categories}")
     print(f"  Real datasets: {'✅' if use_real else 'Synthetic' if use_real is False else 'Auto-detect'}")
     print(f"  Enhanced verification: ✅")
     print(f"  Gzip Level: {args.gzip_level}")
@@ -1653,6 +1872,10 @@ Examples:
         large_datasets=large,
         tiny_datasets=tiny,
         extreme_datasets=extreme,
+        all_tiers=all_tiers,
+        specific_tiers=specific_tiers,
+        include_huge=include_huge,
+        specific_categories=specific_categories,
         output_dir=args.output_dir,
         use_real_datasets=use_real,
         gzip_level=args.gzip_level,
