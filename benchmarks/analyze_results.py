@@ -94,14 +94,25 @@ def compare_methods(results_data):
     for dataset, methods in results_data.items():
         for m in methods:
             name = m['name']
-            # Normalize names
-            if "Gzip" in name: norm_name = "Gzip"
-            elif "Brotli" in name: norm_name = "Brotli"
-            elif "AES" in name: norm_name = "AES"
-            elif "SHA" in name: norm_name = "SHA"
-            elif "Frackture" in name and "Encrypted" not in name: norm_name = "Frackture"
-            elif "Frackture Encrypted" in name: norm_name = "Frackture Encrypted"
-            else: norm_name = name
+            # Normalize names (preserve multi-level sweeps when present)
+            if m.get('gzip_level') is not None:
+                norm_name = f"Gzip L{m['gzip_level']}"
+            elif m.get('brotli_quality') is not None:
+                norm_name = f"Brotli Q{m['brotli_quality']}"
+            elif "Gzip" in name:
+                norm_name = "Gzip"
+            elif "Brotli" in name:
+                norm_name = "Brotli"
+            elif "AES" in name:
+                norm_name = "AES"
+            elif "SHA" in name:
+                norm_name = "SHA"
+            elif "Frackture" in name and "Encrypted" not in name:
+                norm_name = "Frackture"
+            elif "Frackture Encrypted" in name:
+                norm_name = "Frackture Encrypted"
+            else:
+                norm_name = name
             
             stats[norm_name]['ratios'].append(m['compression_ratio'])
             stats[norm_name]['speeds'].append(m['encode_throughput'])
