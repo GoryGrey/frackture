@@ -6,3 +6,6 @@ pytest
 pytest-cov
 hypothesis
 pyyaml
+cryptography
+brotli
+psutil

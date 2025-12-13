@@ -102,7 +102,7 @@ def entropy_channel_encode(input_vector):
     elif len(features) > 16:
         features = features[:16]
     
-    return features
+    return [float(x) for x in features]
 
 def entropy_channel_decode(entropy_data):
     ent = np.array(entropy_data)
