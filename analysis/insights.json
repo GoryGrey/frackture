@@ -1,0 +1,100 @@
+{
+  "summary": {
+    "avg_compression_ratio": 47083.34756795675,
+    "avg_throughput_mbs": 2146.0521165971036,
+    "payload_variance": 10586.786842105263,
+    "is_payload_fixed": false
+  },
+  "reliability": {
+    "is_lossy": true,
+    "lossless_runs": 1,
+    "lossy_runs": 19,
+    "is_deterministic": true,
+    "deterministic_runs": 20,
+    "nondeterministic_runs": 0,
+    "fault_injection_passed": false,
+    "fault_passed_runs": 0,
+    "fault_failed_runs": 20,
+    "total_runs": 20
+  },
+  "comparisons": {
+    "Frackture": {
+      "avg_ratio": 47083.34756795675,
+      "avg_speed": 2146.0521165971036,
+      "avg_mem": 237.555078125,
+      "count": 20
+    },
+    "SHA": {
+      "avg_ratio": 365689.9125,
+      "avg_speed": 1023.7773589038345,
+      "avg_mem": 195.563671875,
+      "count": 20
+    },
+    "AES": {
+      "avg_ratio": 0.9145790762935659,
+      "avg_speed": 1235.5016905763584,
+      "avg_mem": 217.6103515625,
+      "count": 20
+    },
+    "Frackture Encrypted": {
+      "avg_ratio": 30021.83649609698,
+      "avg_speed": 150.88281815348637,
+      "avg_mem": 239.8888671875,
+      "count": 20
+    },
+    "Gzip": {
+      "avg_ratio": 155.1402265136376,
+      "avg_speed": 103.73340169668457,
+      "avg_mem": 178.40473090277777,
+      "count": 18
+    },
+    "Brotli": {
+      "avg_ratio": 4420.861929568116,
+      "avg_speed": 247.35011820711966,
+      "avg_mem": 135.60729166666667,
+      "count": 15
+    }
+  },
+  "data_types": {
+    "Mixed/Other": {
+      "avg_ratio": 54067.89846710565,
+      "avg_mse": 0.205503383766162
+    },
+    "Random": {
+      "avg_ratio": 57384.69710866817,
+      "avg_mse": 0.15466033988500344
+    },
+    "Repetitive": {
+      "avg_ratio": 1976.2280701754387,
+      "avg_mse": 0.227048177362818
+    }
+  },
+  "size_tiers": {
+    "Small/Medium (100KB+)": {
+      "avg_ratio": 1808.7528307059802,
+      "avg_speed": 100.52879253048935,
+      "count": 11
+    },
+    "Tiny (<100B)": {
+      "avg_ratio": 0.11925210806015267,
+      "avg_speed": 0.006999875464157937,
+      "count": 5
+    },
+    "Extreme (>100MB)": {
+      "avg_ratio": 432191.6227683021,
+      "avg_speed": 19612.630698446308,
+      "count": 2
+    },
+    "Large (1MB+)": {
+      "avg_ratio": 28693.414212112373,
+      "avg_speed": 1294.9646089183748,
+      "count": 2
+    }
+  },
+  "optimization": {
+    "avg_gain_pct": 22.35046713086176,
+    "max_gain_pct": 53.15759339789139
+  },
+  "best_datasets": [],
+  "failed_cases": []
+}
