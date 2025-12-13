@@ -1,9 +1,113 @@
 {
+  "version": "2.0",
+  "phase": "Phase 2 - Answer Analysis Questions",
   "summary": {
     "avg_compression_ratio": 47083.34756795675,
     "avg_throughput_mbs": 2146.0521165971036,
     "payload_variance": 10586.786842105263,
-    "is_payload_fixed": false
+    "is_payload_fixed": false,
+    "payload_size_range": {
+      "min_bytes": 173,
+      "max_bytes": 408,
+      "avg_bytes": 331.95,
+      "samples": 20
+    }
+  },
+  "phase2_questions": {
+    "q1_payload_size_fixed": {
+      "answer": "No",
+      "is_fixed": false,
+      "details": {
+        "is_fixed": false,
+        "min": 173,
+        "max": 408,
+        "avg": 331.95,
+        "variance": 10586.786842105263,
+        "samples": 20
+      }
+    },
+    "q2_lossy_vs_lossless": {
+      "classification": "Lossy",
+      "is_lossy": true,
+      "lossy_runs": 19,
+      "lossless_runs": 1,
+      "total_runs": 20,
+      "lossy_percentage": 95.0
+    },
+    "q3_compression_gains": {
+      "avg_ratio": 47083.34756795675,
+      "best_ratio": 606113.2947976879,
+      "worst_ratio": 0.024691358024691357,
+      "median_ratio": 883.5087719298244,
+      "avg_throughput_mbs": 2146.0521165971036,
+      "best_throughput_mbs": 19948.520847014,
+      "worst_throughput_mbs": 0.0019293127003193258
+    },
+    "q4_vs_gzip_brotli": {
+      "frackture_avg_ratio": 47083.34756795675,
+      "frackture_avg_throughput": 2146.0521165971036,
+      "gzip_by_level": {},
+      "brotli_by_quality": {},
+      "frackture_wins_compression": 0,
+      "total_comparisons": 0,
+      "win_rate_percent": 0
+    },
+    "q5_latency_hashing_encryption": {
+      "operations": {
+        "frackture_hash": {
+          "avg_latency_ms": 118.73131119998703,
+          "min_latency_ms": 0.011723999989499134,
+          "max_latency_ms": 1682.6614610000092,
+          "count": 20
+        },
+        "frackture_encrypt": {
+          "avg_latency_ms": 147.1597408500017,
+          "min_latency_ms": 0.0037400000110210385,
+          "max_latency_ms": 2255.0060540000345,
+          "count": 20
+        },
+        "sha256": {
+          "avg_latency_ms": 7.918222149996268,
+          "min_latency_ms": 0.003888000037477468,
+          "max_latency_ms": 70.74182799999562,
+          "count": 20
+        },
+        "aes_gcm": {
+          "avg_latency_ms": 150.45812655001214,
+          "min_latency_ms": 0.00450200002433121,
+          "max_latency_ms": 2304.414753000003,
+          "count": 20
+        }
+      },
+      "comparisons": {
+        "frackture_vs_sha256": {
+          "frackture_ms": 118.73131119998703,
+          "sha256_ms": 7.918222149996268,
+          "speedup_factor": 0.06669026114483888,
+          "winner": "SHA256"
+        },
+        "frackture_encrypted_vs_aes_gcm": {
+          "frackture_encrypted_ms": 147.1597408500017,
+          "aes_gcm_ms": 150.45812655001214,
+          "speedup_factor": 1.0224136416723677,
+          "winner": "Frackture Encrypted"
+        }
+      }
+    },
+    "q6_optimization_gains": {
+      "avg_improvement_pct": 22.35046713086176,
+      "max_improvement_pct": 53.15759339789139,
+      "mechanism": "Iterative decoder feedback loop minimizing MSE"
+    },
+    "q7_determinism_fault_injection": {
+      "determinism_passed": true,
+      "deterministic_runs": 20,
+      "nondeterministic_runs": 0,
+      "fault_injection_passed": false,
+      "fault_passed_runs": 0,
+      "fault_failed_runs": 20,
+      "status": "PARTIAL"
+    }
   },
   "reliability": {
     "is_lossy": true,
@@ -93,8 +197,49 @@
   },
   "optimization": {
     "avg_gain_pct": 22.35046713086176,
-    "max_gain_pct": 53.15759339789139
+    "max_gain_pct": 53.15759339789139,
+    "gains_distribution": [
+      25.04700915965028,
+      11.799176874075606,
+      53.15759339789139,
+      10.248652217903865,
+      47.12300941516865,
+      18.680366831206076,
+      11.513261366833296,
+      53.15759339789139,
+      6.077383181812022,
+      47.12300941516865,
+      16.18894154814832,
+      19.614204433143072,
+      0.0,
+      10.350594654949578,
+      40.78747472833423,
+      17.19399130022915,
+      0.0,
+      22.392538374516622,
+      27.320443402744576,
+      9.234098917568401
+    ]
   },
-  "best_datasets": [],
-  "failed_cases": []
+  "weaknesses": [
+    {
+      "type": "low_compression",
+      "tier": "Tiny (<100B)",
+      "frackture_ratio": 0.11925210806015267,
+      "description": "Frackture achieves only 0.12x compression in Tiny (<100B) - poor for general-purpose compression"
+    },
+    {
+      "type": "fault_injection_failures",
+      "count": 20,
+      "description": "Fault injection detection failed in 20 cases - mutations not properly detected"
+    }
+  ],
+  "weakness_summary": {
+    "total_weaknesses": 2,
+    "types": [
+      "fault_injection_failures",
+      "low_compression"
+    ],
+    "has_critical_issues": true
+  }
 }
