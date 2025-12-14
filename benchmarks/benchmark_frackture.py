@@ -44,6 +44,8 @@ frackture_deterministic_hash = frackture_module.frackture_deterministic_hash
 optimize_frackture = frackture_module.optimize_frackture
 frackture_encrypt_payload = frackture_module.frackture_encrypt_payload
 frackture_decrypt_payload = frackture_module.frackture_decrypt_payload
+CompressionTier = frackture_module.CompressionTier
+select_tier = frackture_module.select_tier
 
 # Try to import cryptography for AES-GCM
 try:
@@ -266,16 +268,19 @@ class BenchmarkRunner:
         original_size = len(data)
         
         try:
+            # Detect tier from input size
+            tier = select_tier(data)
+            
             # Memory tracking
             mem_tracker = MemoryTracker()
             mem_tracker.start()
             
-            # Preprocessing
-            preprocessed = frackture_preprocess_universal_v2_6(data)
+            # Preprocessing with tier awareness
+            preprocessed = frackture_preprocess_universal_v2_6(data, tier=tier)
             
             # === 1. BASELINE ENCODING/DECODING ===
             encode_start = time.perf_counter()
-            payload = frackture_v3_3_safe(preprocessed)
+            payload = frackture_v3_3_safe(preprocessed, tier=tier)
             encode_time = time.perf_counter() - encode_start
             
             # === 2. PAYLOAD SIZING METRICS ===
@@ -308,16 +313,16 @@ class BenchmarkRunner:
             
             # === 4. OPTIMIZATION COMPARISON ===
             optimization_start = time.perf_counter()
-            optimized_payload, optimized_mse = optimize_frackture(preprocessed, num_trials=5)
+            optimized_payload, optimized_mse = optimize_frackture(preprocessed, num_trials=5, tier=tier)
             optimization_time = time.perf_counter() - optimization_start
-            
+
             # Calculate improvement percentage
             if baseline_mse > 0:
                 optimization_improvement_pct = ((baseline_mse - optimized_mse) / baseline_mse) * 100
             else:
                 optimization_improvement_pct = 0.0
-            
-            optimization_trials = 5
+
+            optimization_trials = 5 if tier != CompressionTier.TINY else 2
             
             # === 5. DETERMINISM VALIDATION ===
             # Encode the same input multiple times and check for identical payloads
@@ -478,7 +483,9 @@ class BenchmarkRunner:
                 is_deterministic=is_deterministic,
                 determinism_drifts=determinism_drifts,
                 fault_injection_passed=fault_injection_passed,
-                fault_injection_errors=fault_injection_errors or []
+                fault_injection_errors=fault_injection_errors or [],
+                # Tier information
+                tier_name=tier.value if tier else "default"
             )
             
         except Exception as e:

@@ -104,6 +104,76 @@ Frackture is built on three core principles:
 
 ---
 
+## Compression Tiers
+
+Frackture automatically selects tier-aware configurations based on input size, optimizing for different compression scenarios.
+
+### Tier Classification
+
+```python
+def select_tier(data) -> CompressionTier:
+    """Classify input into tier based on byte size"""
+    size = len(data_as_bytes)
+    
+    if size < 100:
+        return CompressionTier.TINY      # < 100 bytes
+    elif size >= 10 * 1024 * 1024:
+        return CompressionTier.LARGE     # ≥ 10 MB
+    else:
+        return CompressionTier.DEFAULT   # 100 bytes - 10 MB
+```
+
+### Tier-Specific Optimizations
+
+| Component | Tiny | Default | Large |
+|-----------|------|---------|-------|
+| **Input Size Range** | < 100 B | 100 B - 10 MB | ≥ 10 MB |
+| **Symbolic Passes** | 2 | 4 | 4 |
+| **Optimization Trials** | 2 | 5 | 5 |
+| **Preprocessing Mode** | Hash-based + blend | Standard wrap-pad | Standard wrap-pad |
+| **Reconstruction Weight** | 70% sym / 30% ent | 50% / 50% | 50% / 50% |
+| **Use Cases** | Tokens, IDs, short strings | General compression | Large files, datasets |
+
+### Tiny Tier Preprocessing
+
+For inputs < 100 bytes, the preprocessor uses specialized handling:
+
+1. **Variance Guards**: Detects and handles near-zero variance
+   - If range < 1e-8, use constant 0.5 values
+   - Prevents divide-by-zero and NaN in normalization
+
+2. **Hash-Based Padding**:
+   - Generate SHA256 hash of normalized input
+   - Create hash vector from first 32 bytes
+   - Tile hash to 768 elements
+   - Blend with original (ratio = actual_size / 768)
+   - Formula: `final = ratio * padded_original + (1-ratio) * padded_hash`
+
+3. **Properties**:
+   - Deterministic (same input → same output)
+   - Maintains normalization [0, 1]
+   - Fills sparse short vectors evenly
+
+### Tiny Tier Symbolic Processing
+
+For tiny inputs, symbolic channel uses lighter processing:
+
+- **2 passes** instead of 4 (faster for small inputs)
+- Same XOR + rotation + entropy mixing pipeline
+- Output still 64-char hex (32 bytes)
+
+### Tiny Tier Reconstruction
+
+When `tier_name == "tiny"` in payload:
+
+```
+reconstructed = 0.7 * symbolic_decoded + 0.3 * entropy_decoded
+```
+
+**Rationale**: Tiny inputs benefit from heavier weighting on symbolic channel, which better preserves identity. The symbolic fingerprint is more stable for short sequences than frequency analysis.
+
+---
+
 ## Universal Preprocessor
 
 The preprocessor is the entry point for all data, normalizing disparate inputs into a consistent 768-element vector.
