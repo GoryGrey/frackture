@@ -116,7 +116,7 @@ class TestRoundTrip:
             assert np.all(reconstructed <= 1)
         except Exception as e:
             # Some pathological inputs might cause issues, but they should be handled gracefully
-            pytefail(f"Round-trip failed for {type(test_data)}: {e}")
+            pytest.fail(f"Round-trip failed for {type(test_data)}: {e}")
     
     def test_roundtrip_large_payloads(self, large_data):
         """Test round-trip with large payloads"""
@@ -154,7 +154,7 @@ class TestRoundTrip:
                 assert not np.any(np.isnan(reconstructed)), f"NaN in reconstruction for {type(test_data)}"
                 assert not np.any(np.isinf(reconstructed)), f"Infinity in reconstruction for {type(test_data)}"
             except Exception as e:
-                pytefail(f"Round-trip failed for adversarial input {repr(test_data)}: {e}")
+                pytest.fail(f"Round-trip failed for adversarial input {repr(test_data)}: {e}")
     
     def test_roundtrip_consistency(self):
         """Test that round-trip produces consistent results"""

@@ -145,15 +145,20 @@ if hmac.compare_digest(encrypted["signature"], expected_signature):
 
 **How It Works:**
 ```
-Message: {"symbolic": "abc...", "entropy": [...]}
+Data: {"symbolic": "<64-hex>", "entropy": [16 floats], ...optional tier metadata...}
+Metadata: {"version": 1, "key_id": "<8-hex>"}
 Key: "my-secret-key"
-                ↓
-HMAC-SHA256(Message, Key) → Signature
-                ↓
-Store: {message, signature, metadata}
-                ↓
-Verify: Recompute HMAC and compare
+                   ↓
+Canonical JSON (sort_keys=True, separators=(',', ':'))
+                   ↓
+HMAC-SHA256({data, metadata}, Key) → Signature
+                   ↓
+Store: {"data": ..., "metadata": ..., "signature": ...}
+                   ↓
+Verify: validate structure + recompute HMAC + constant-time compare
 ```
+
+**Structural validation:** Frackture validates the raw payload format (required keys, 64-char hex fingerprint, 16 finite entropy values, optional tier metadata) and the encrypted envelope structure. Any structural mismatch or integrity failure raises `ValueError`.
 
 **Strength:**
 - SHA-256: 256-bit output, collision-resistant
@@ -179,6 +184,7 @@ if not hmac.compare_digest(received_sig, expected_sig):
 **Structure:**
 ```python
 "metadata": {
+    "version": 1,
     "key_id": "a3f5c8e2"  # First 8 chars of SHA256(key)
 }
 ```
