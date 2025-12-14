@@ -61,34 +61,59 @@ Create fixed-size fingerprints for data integrity, deduplication, or similarity 
 from frackture import (
     frackture_preprocess_universal_v2_6,
     frackture_v3_3_safe,
-    frackture_v3_3_reconstruct
+    frackture_v3_3_reconstruct,
+    CompressionTier,
+    select_tier
 )
 
 # Any input type: str, bytes, dict, list, numpy arrays
 data = b"Hello world. This is a test of the emergency broadcast system."
 
-# Preprocess to normalized 768-length vector
-preprocessed = frackture_preprocess_universal_v2_6(data)
+# Auto-detect tier from input size (tiny <100B, default, large 10MB+)
+tier = select_tier(data)  # Returns CompressionTier.DEFAULT
 
-# Encode to fixed ~96-byte payload
-payload = frackture_v3_3_safe(preprocessed)
+# Preprocess to normalized 768-length vector (tier-aware)
+preprocessed = frackture_preprocess_universal_v2_6(data, tier=tier)
+
+# Encode to fixed ~96-byte payload (tier-aware)
+payload = frackture_v3_3_safe(preprocessed, tier=tier)
 print(f"Compressed size: {len(payload['symbolic']) + len(payload['entropy']) * 8} bytes")
+print(f"Tier: {payload.get('tier_name', 'default')}")
 
-# Reconstruct approximate representation
+# Reconstruct approximate representation (tier-aware)
 reconstructed = frackture_v3_3_reconstruct(payload)
 
 # payload contains:
 # - 'symbolic': 64-char hex string (32 bytes) - identity fingerprint
 # - 'entropy': 16 floats (128 bytes serialized) - frequency signature
+# - 'tier_name': 'tiny'|'default'|'large' - compression mode metadata
 ```
 
 **Output structure:**
 ```python
 {
     "symbolic": "a3f5c8e2d9b1f7a4...",  # 64-char hex fingerprint
-    "entropy": [0.234, 0.891, ...]      # 16-element frequency signature
+    "entropy": [0.234, 0.891, ...],     # 16-element frequency signature
+    "tier_name": "default"              # Compression tier for this input
 }
 ```
+
+#### Compression Tiers
+
+Frackture automatically optimizes for input size:
+
+| Tier | Size Range | Symbolic Passes | Optimization Trials | Reconstruction | Use Case |
+|------|-----------|-----------------|---------------------|-----------------|----------|
+| **Tiny** | < 100 bytes | 2 | 2 | 70% symbolic / 30% entropy | Small identifiers, tokens |
+| **Default** | 100 B - 10 MB | 4 | 5 | 50% symbolic / 50% entropy | General-purpose compression |
+| **Large** | ≥ 10 MB | 4 | 5 | 50% symbolic / 50% entropy | Large file fingerprinting |
+
+**Tiny Tier Optimizations:**
+- Deterministic hash-based padding for ultra-short inputs
+- Variance guards to prevent numerical instability
+- Lighter symbolic fingerprinting (2 passes vs 4)
+- Reduced optimization trials (2 vs 5)
+- Heavy weighting on symbolic channel (70/30) for better identity preservation
 
 ### 2. 🔐 Encryption Mode
 

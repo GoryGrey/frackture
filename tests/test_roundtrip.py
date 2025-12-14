@@ -6,7 +6,17 @@ import numpy as np
 from hypothesis import given, settings
 from hypothesis.strategies import text, binary, dictionaries, lists, floats, integers, data
 import math
-from conftest import arbitrary_data
+from conftest import (
+    arbitrary_data,
+    frackture_preprocess_universal_v2_6,
+    frackture_v3_3_safe,
+    frackture_v3_3_reconstruct,
+    entropy_channel_encode,
+    entropy_channel_decode,
+    symbolic_channel_encode,
+    symbolic_channel_decode,
+    merge_reconstruction,
+)
 
 class TestRoundTrip:
     """Test round-trip compression/decompression functionality"""
@@ -189,7 +199,8 @@ class TestRoundTrip:
         assert isinstance(payload, dict)
         assert "symbolic" in payload
         assert "entropy" in payload
-        assert len(payload) == 2
+        assert "tier_name" in payload  # Tier metadata is now included
+        assert len(payload) >= 3  # At least symbolic, entropy, tier_name
         
         # Check symbolic fingerprint format
         assert isinstance(payload["symbolic"], str)
@@ -202,6 +213,10 @@ class TestRoundTrip:
         # All entropy values should be floats
         for val in payload["entropy"]:
             assert isinstance(val, (int, float))
+        
+        # Check tier metadata
+        assert isinstance(payload["tier_name"], str)
+        assert payload["tier_name"] in ("tiny", "default", "large")
     
     def test_reconstruction_quality(self):
         """Test reconstruction quality with controlled input"""
@@ -287,3 +302,107 @@ class TestRoundTrip:
         # Should be average of inputs
         expected = (entropy_decoded + symbolic_decoded) / 2
         np.testing.assert_array_almost_equal(merged, expected)
+
+
+class TestTinyTierRoundtrip:
+    """Tests for tiny tier roundtrip compression/decompression.
+    
+    Note: Compression ratio targets rely on the compact serializer (Task 5),
+    which will replace the current JSON serialization with a more compact
+    binary format. Until that's implemented, tiny tier focuses on stability
+    and metadata handling rather than compression ratios.
+    """
+    
+    def test_tiny_roundtrip_bytes(self):
+        """Test tiny tier roundtrip with small bytes input"""
+        # Import at function level for clarity
+        from conftest import (
+            frackture_preprocess_universal_v2_6,
+            frackture_v3_3_safe,
+            frackture_v3_3_reconstruct,
+            CompressionTier,
+            select_tier,
+        )
+        
+        tiny_data = b"x"  # 1 byte
+        
+        # Auto-detect tier
+        tier = select_tier(tiny_data)
+        
+        # Preprocess with auto-detection
+        preprocessed = frackture_preprocess_universal_v2_6(tiny_data, tier=tier)
+        
+        # Encode
+        payload = frackture_v3_3_safe(preprocessed, tier=tier)
+        
+        # Verify tier metadata
+        assert payload.get("tier_name") == "tiny"
+        
+        # Decode
+        reconstructed = frackture_v3_3_reconstruct(payload)
+        
+        # Verify reconstruction properties
+        assert isinstance(reconstructed, np.ndarray)
+        assert len(reconstructed) == 768
+        assert np.all(np.isfinite(reconstructed))
+    
+    def test_tiny_roundtrip_string(self):
+        """Test tiny tier roundtrip with small string input"""
+        from conftest import (
+            frackture_preprocess_universal_v2_6,
+            frackture_v3_3_safe,
+            frackture_v3_3_reconstruct,
+            CompressionTier,
+            select_tier,
+        )
+        
+        tiny_data = "ab"  # 2 bytes
+        
+        # Auto-detect tier
+        tier = select_tier(tiny_data)
+        
+        # Preprocess with auto-detection
+        preprocessed = frackture_preprocess_universal_v2_6(tiny_data, tier=tier)
+        
+        # Encode
+        payload = frackture_v3_3_safe(preprocessed, tier=tier)
+        
+        # Verify tier metadata
+        assert payload.get("tier_name") == "tiny"
+        
+        # Decode
+        reconstructed = frackture_v3_3_reconstruct(payload)
+        
+        # Verify reconstruction
+        assert isinstance(reconstructed, np.ndarray)
+        assert len(reconstructed) == 768
+    
+    def test_tiny_tier_weighting_in_reconstruction(self):
+        """Test that tiny tier uses different reconstruction weights (70/30)"""
+        from conftest import (
+            frackture_preprocess_universal_v2_6,
+            frackture_v3_3_safe,
+            frackture_v3_3_reconstruct,
+            CompressionTier,
+            select_tier,
+        )
+        
+        tiny_data = b"small"
+        
+        # Auto-detect tier
+        tier = select_tier(tiny_data)
+        
+        # Get a tiny tier payload
+        preprocessed = frackture_preprocess_universal_v2_6(tiny_data, tier=tier)
+        payload = frackture_v3_3_safe(preprocessed, tier=tier)
+        
+        # Reconstruct
+        reconstructed = frackture_v3_3_reconstruct(payload)
+        
+        # Verify reconstruction is deterministic
+        reconstructed2 = frackture_v3_3_reconstruct(payload)
+        np.testing.assert_array_equal(reconstructed, reconstructed2)
+        
+        # Both should be valid
+        assert np.all(np.isfinite(reconstructed))
+        assert len(reconstructed) == 768

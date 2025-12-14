@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import math
+from enum import Enum
 from typing import Any, Dict, Iterable, Optional, Union
 
 import numpy as np
@@ -13,6 +14,47 @@ _FRACKTURE_ENTROPY_LEN = 16
 _FRACKTURE_ENCRYPTION_VERSION = 1
 
 _UNSET = object()
+
+
+class CompressionTier(Enum):
+    """Enumeration of compression tiers based on input size."""
+    TINY = "tiny"        # < 100 bytes
+    DEFAULT = "default"  # 100 bytes - 10 MB
+    LARGE = "large"      # 10+ MB
+
+
+def select_tier(data: Union[str, bytes, dict, list, np.ndarray, Any]) -> CompressionTier:
+    """
+    Classify input data into a compression tier based on size.
+    
+    Args:
+        data: Input data of any type
+        
+    Returns:
+        CompressionTier: The appropriate tier for the input
+    """
+    try:
+        if isinstance(data, bytes):
+            size = len(data)
+        elif isinstance(data, str):
+            size = len(data.encode("utf-8"))
+        elif isinstance(data, dict):
+            size = len(str(sorted(data.items())).encode("utf-8"))
+        elif isinstance(data, (list, tuple)):
+            size = len(str(data).encode("utf-8"))
+        elif isinstance(data, np.ndarray):
+            size = data.nbytes
+        else:
+            size = len(str(data).encode("utf-8"))
+    except Exception:
+        return CompressionTier.DEFAULT
+    
+    if size < 100:
+        return CompressionTier.TINY
+    elif size >= 10 * 1024 * 1024:  # 10 MB
+        return CompressionTier.LARGE
+    else:
+        return CompressionTier.DEFAULT
 
 
 def _key_to_bytes(key: Union[str, bytes, bytearray]) -> bytes:
@@ -115,7 +157,24 @@ def _normalize_frackture_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 ### === Preprocessing === ###
-def frackture_preprocess_universal_v2_6(data):
+def frackture_preprocess_universal_v2_6(data, tier: Optional[CompressionTier] = None):
+    """
+    Preprocess input data into a normalized 768-length vector.
+    
+    For tiny tier (<100 bytes), uses deterministic hash-based padding with
+    variance guards and lighter processing.
+    
+    Args:
+        data: Input data of any type (str, bytes, dict, list, np.ndarray, etc.)
+        tier: Optional CompressionTier. If None, will auto-detect.
+        
+    Returns:
+        np.ndarray: Normalized 768-length float32 vector
+    """
+    # Auto-detect tier if not provided
+    if tier is None:
+        tier = select_tier(data)
+    
     try:
         if isinstance(data, str):
             vec = np.frombuffer(data.encode("utf-8"), dtype=np.uint8)
@@ -130,16 +189,63 @@ def frackture_preprocess_universal_v2_6(data):
             vec = data.flatten()
         else:
             vec = np.frombuffer(str(data).encode("utf-8"), dtype=np.uint8)
+        
         normed = vec.astype(np.float32)
-        normed = (normed - np.min(normed)) / (np.ptp(normed) + 1e-8)
-        padded = np.pad(normed, (0, 768 - len(normed) % 768), mode="wrap")
-        return padded[:768]
+        
+        # For tiny tier, use hash-based deterministic padding
+        if tier == CompressionTier.TINY:
+            min_val = np.min(normed) if len(normed) > 0 else 0
+            max_val = np.max(normed) if len(normed) > 0 else 1
+            ptp = max_val - min_val
+            
+            # Variance guard: if range is too small, use normalized values
+            if ptp < 1e-8:
+                normed = np.ones_like(normed) * 0.5
+            else:
+                normed = (normed - min_val) / (ptp + 1e-8)
+            
+            # Hash-based deterministic padding for tiny inputs
+            data_hash = hashlib.sha256(str(normed.tolist()).encode()).digest()
+            hash_vec = np.frombuffer(data_hash, dtype=np.uint8).astype(np.float32) / 255.0
+            
+            # Tile hash values to reach 768 samples
+            num_repeats = (768 // len(hash_vec)) + 1
+            padded = np.tile(hash_vec, num_repeats)[:768]
+            
+            # Blend original data with hash-based padding
+            blend_ratio = min(len(normed) / 768.0, 1.0)
+            padded_normed = np.pad(normed, (0, 768 - len(normed)), mode="wrap")
+            final = blend_ratio * padded_normed + (1 - blend_ratio) * padded
+            return final.astype(np.float32)
+        else:
+            # Standard preprocessing for other tiers
+            normed = (normed - np.min(normed)) / (np.ptp(normed) + 1e-8)
+            padded = np.pad(normed, (0, 768 - len(normed) % 768), mode="wrap")
+            return padded[:768].astype(np.float32)
+            
     except Exception:
         return np.zeros(768, dtype=np.float32)
 
 
 ### === Symbolic Fingerprinting System === ###
-def frackture_symbolic_fingerprint_f_infinity(input_vector, passes=4):
+def frackture_symbolic_fingerprint_f_infinity(input_vector, passes=4, tier: Optional[CompressionTier] = None):
+    """
+    Generate symbolic fingerprint via recursive XOR and masking.
+    
+    For tiny tier, uses lighter pass counts (2 instead of 4) for efficiency.
+    
+    Args:
+        input_vector: Input vector to fingerprint
+        passes: Number of XOR passes (default 4, reduced to 2 for tiny tier)
+        tier: Optional CompressionTier. If tiny, overrides passes to 2.
+        
+    Returns:
+        str: 64-character hex fingerprint
+    """
+    # Use lighter passes for tiny tier
+    if tier == CompressionTier.TINY:
+        passes = 2
+    
     bits = (input_vector * 255).astype(np.uint8)
     mask = np.array([(i**2 + i * 3 + 1) % 256 for i in range(len(bits))], dtype=np.uint8)
     for p in range(passes):
@@ -152,8 +258,8 @@ def frackture_symbolic_fingerprint_f_infinity(input_vector, passes=4):
     return fingerprint
 
 
-def symbolic_channel_encode(input_vector):
-    return frackture_symbolic_fingerprint_f_infinity(input_vector)
+def symbolic_channel_encode(input_vector, tier: Optional[CompressionTier] = None):
+    return frackture_symbolic_fingerprint_f_infinity(input_vector, tier=tier)
 
 
 def symbolic_channel_decode(symbolic_hash):
@@ -223,26 +329,85 @@ def merge_reconstruction(entropy_vec, symbolic_vec):
 
 
 ### === Core Frackture Compression Functions === ###
-def frackture_v3_3_safe(input_vector):
-    return {"symbolic": symbolic_channel_encode(input_vector), "entropy": entropy_channel_encode(input_vector)}
+def frackture_v3_3_safe(input_vector, tier: Optional[CompressionTier] = None):
+    """
+    Safe Frackture encoding with dual-channel compression.
+    
+    Stores tier metadata in the payload for reconstruction awareness.
+    
+    Args:
+        input_vector: Preprocessed 768-length vector
+        tier: Optional CompressionTier. If None, defaults to DEFAULT.
+        
+    Returns:
+        dict: Payload with 'symbolic', 'entropy', and optional 'tier_name'
+    """
+    if tier is None:
+        tier = CompressionTier.DEFAULT
+    
+    payload = {
+        "symbolic": symbolic_channel_encode(input_vector, tier=tier),
+        "entropy": entropy_channel_encode(input_vector),
+        "tier_name": tier.value,
+    }
+    return payload
 
 
 def frackture_v3_3_reconstruct(payload):
+    """
+    Reconstruct approximate representation from Frackture payload.
+    
+    Honors tier metadata for specialized reconstruction:
+    - Tiny tier: Heavier weighting on symbolic fingerprint (70/30 split)
+    - Other tiers: Balanced 50/50 merge
+    
+    Args:
+        payload: Frackture payload dict with 'symbolic', 'entropy', optional 'tier_name'
+        
+    Returns:
+        np.ndarray: Reconstructed 768-length vector
+    """
     validate_frackture_payload(payload)
 
     entropy_part = entropy_channel_decode(payload["entropy"])
     symbolic_part = symbolic_channel_decode(payload["symbolic"])
-    return merge_reconstruction(entropy_part, symbolic_part)
+    
+    # Check if payload has tier metadata
+    tier_name = payload.get("tier_name")
+    
+    if tier_name == CompressionTier.TINY.value:
+        # For tiny tier, weight symbolic more heavily (better identity preservation)
+        # Symbolic: 70%, Entropy: 30%
+        return (0.7 * np.array(symbolic_part) + 0.3 * np.array(entropy_part)).astype(np.float32)
+    else:
+        # Default balanced merge
+        return merge_reconstruction(entropy_part, symbolic_part)
 
 
 ### === Self-Optimization (Decoder Loss Feedback Loop) === ###
-def optimize_frackture(input_vector, num_trials=5):
+def optimize_frackture(input_vector, num_trials=5, tier: Optional[CompressionTier] = None):
+    """
+    Self-optimizing encoder that minimizes reconstruction MSE.
+    
+    For tiny tier, uses reduced trial count (2 instead of 5) for efficiency.
+    
+    Args:
+        input_vector: Preprocessed 768-length vector
+        num_trials: Number of optimization trials (reduced to 2 for tiny tier)
+        tier: Optional CompressionTier. If tiny, reduces trials automatically.
+        
+    Returns:
+        tuple: (best_payload, best_mse)
+    """
+    if tier == CompressionTier.TINY:
+        num_trials = 2
+    
     best_payload = None
     best_mse = float("inf")
     for trial in range(num_trials):
-        symbolic = frackture_symbolic_fingerprint_f_infinity(input_vector, passes=trial + 2)
+        symbolic = frackture_symbolic_fingerprint_f_infinity(input_vector, passes=trial + 2, tier=tier)
         entropy = entropy_channel_encode(input_vector)
-        payload = {"symbolic": symbolic, "entropy": entropy}
+        payload = {"symbolic": symbolic, "entropy": entropy, "tier_name": (tier or CompressionTier.DEFAULT).value}
         recon = frackture_v3_3_reconstruct(payload)
         mse = np.mean((input_vector - recon) ** 2)
         if mse < best_mse:
