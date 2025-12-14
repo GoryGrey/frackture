@@ -4,7 +4,7 @@ Property-based tests for optimization and fingerprint length verification
 import pytest
 import numpy as np
 from hypothesis import given, settings, assume
-from hypothesis.strategies import text, binary, integers, floats, lists
+from hypothesis.strategies import text, binary, integers, floats, lists, data
 from conftest import arbitrary_data
 
 class TestOptimization:
@@ -134,7 +134,7 @@ class TestOptimization:
                 # May run out of memory for very large inputs
                 print(f"Memory error for input size {len(test_input)}")
             except Exception as e:
-                pytefail(f"Optimization failed for size {len(test_input)}: {e}")
+                pytest.fail(f"Optimization failed for size {len(test_input)}: {e}")
     
     def test_optimization_pareto_property(self):
         """Test that optimization explores different trade-offs"""
@@ -204,7 +204,7 @@ class TestOptimization:
             assert not np.isinf(optimized_mse)
             
         except Exception as e:
-            pytefail(f"Failed with extreme value {test_float}: {e}")
+            pytest.fail(f"Failed with extreme value {test_float}: {e}")
     
     def test_optimization_deterministic_property(self):
         """Test that optimization is deterministic"""

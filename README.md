@@ -112,23 +112,24 @@ encryption_key = "my-secret-key-2024"
 encrypted = frackture_encrypt_payload(payload, encryption_key)
 
 # Encrypted structure includes:
-# - data: original payload
-# - signature: HMAC-SHA256 signature
-# - metadata: key_id for verification
+# - data: validated Frackture payload
+# - signature: HMAC-SHA256 over canonical JSON (sort_keys + separators)
+# - metadata: versioned envelope + key_id stamping
 
 # Decrypt with correct key
 try:
     decrypted = frackture_decrypt_payload(encrypted, encryption_key)
     print("Decryption successful!")
 except ValueError as e:
-    print(f"Decryption failed: {e}")  # Wrong key or tampered data
+    print(f"Decryption failed: {e}")  # Wrong key, tampering, or structural corruption
 ```
 
 **Security features:**
-- HMAC-SHA256 authentication
-- Constant-time signature comparison (timing-attack resistant)
-- Key ID metadata for key management
-- Automatic tamper detection
+- Strict payload validation (64-char hex fingerprint + 16 finite entropy values)
+- Canonical JSON signing for deterministic HMAC calculation
+- Versioned envelope + key_id metadata
+- HMAC-SHA256 authentication with constant-time comparison
+- Rejects malformed/extra fields; tampering raises `ValueError`
 
 ### 3. 🔍 Identity-Preserving Hashing
 

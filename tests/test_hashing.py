@@ -117,7 +117,7 @@ class TestHashing:
         try:
             bytes.fromhex(fingerprint)
         except ValueError:
-            pytefail(f"Invalid hex fingerprint: {fingerprint}")
+            pytest.fail(f"Invalid hex fingerprint: {fingerprint}")
         
         # Length should be even (hex pairs)
         assert len(fingerprint) % 2 == 0
@@ -160,7 +160,7 @@ class TestHashing:
                 else:
                     fingerprints[fingerprint] = (i, data)
             except Exception as e:
-                pytefail(f"Error processing adversarial input {i}: {e}")
+                pytest.fail(f"Error processing adversarial input {i}: {e}")
         
         # Log collisions if found (may be expected in some cases)
         if collisions:
@@ -194,7 +194,7 @@ class TestHashing:
                 else:
                     fingerprints[fingerprint] = data
             except Exception as e:
-                pytefail(f"Error processing large-scale input: {e}")
+                pytest.fail(f"Error processing large-scale input: {e}")
         
         # Print collision rate for analysis
         collision_rate = len(collisions) / len(test_inputs)
@@ -248,7 +248,7 @@ class TestHashing:
             assert hash1 != salted_hash1
             
         except Exception as e:
-            pytefail(f"Hash property test failed: {e}")
+            pytest.fail(f"Hash property test failed: {e}")
     
     def test_entropy_channel_uniqueness(self):
         """Test that entropy channel encoding is unique for different inputs"""
@@ -298,7 +298,7 @@ class TestHashing:
         for var in variations:
             h = frackture_deterministic_hash(var)
             if h in hashes:
-                pytefail(f"Collision found: {var} and {hashes[h]}")
+                pytest.fail(f"Collision found: {var} and {hashes[h]}")
             else:
                 hashes[h] = var
         

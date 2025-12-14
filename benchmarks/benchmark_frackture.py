@@ -341,54 +341,99 @@ class BenchmarkRunner:
             # === 6. FAULT INJECTION ===
             fault_injection_passed = True
             fault_injection_errors = []
-            
+
+            def _expect_value_error(label: str, fn: Callable[[], None]) -> None:
+                nonlocal fault_injection_passed, fault_injection_errors
+                try:
+                    fn()
+                    fault_injection_passed = False
+                    fault_injection_errors.append(f"{label} mutation not detected")
+                except ValueError:
+                    pass
+                except Exception as e:
+                    fault_injection_passed = False
+                    fault_injection_errors.append(f"{label} raised unexpected {type(e).__name__}: {e}")
+
             try:
-                # Test 1: Mutate symbolic fingerprint
-                mutated_symbolic = "".join("FF" if c != "F" else "00" for c in payload['symbolic'])
-                mutated_payload_1 = {
-                    'symbolic': mutated_symbolic,
-                    'entropy': payload['entropy']
+                import copy
+
+                fault_injection_key = "benchmark_fault_injection_key"
+
+                payload_with_meta = {
+                    "symbolic": payload["symbolic"],
+                    "entropy": payload["entropy"],
+                    "tier_name": "benchmark",
+                    "category_name": "benchmark",
+                    "actual_size_bytes": original_size,
+                    "target_size_bytes": original_size,
                 }
-                try:
-                    _ = frackture_v3_3_reconstruct(mutated_payload_1)
-                    fault_injection_passed = False
-                    fault_injection_errors.append("Symbolic mutation not detected")
-                except (ValueError, IndexError, KeyError):
-                    pass  # Expected behavior
-                
-                # Test 2: Mutate entropy channel
-                mutated_entropy = [float(x * 2) for x in payload['entropy']]
-                mutated_payload_2 = {
-                    'symbolic': payload['symbolic'],
-                    'entropy': mutated_entropy
-                }
-                try:
-                    _ = frackture_v3_3_reconstruct(mutated_payload_2)
-                    fault_injection_passed = False
-                    fault_injection_errors.append("Entropy mutation not detected")
-                except (ValueError, IndexError, KeyError):
-                    pass  # Expected behavior
-                
-                # Test 3: Empty payload
-                try:
-                    _ = frackture_v3_3_reconstruct({})
-                    fault_injection_passed = False
-                    fault_injection_errors.append("Empty payload not detected")
-                except (ValueError, IndexError, KeyError, TypeError):
-                    pass  # Expected behavior
-                
-                # Test 4: Invalid hex in symbolic
-                try:
-                    invalid_payload = {
-                        'symbolic': 'INVALID_HEX_!@#$%',
-                        'entropy': payload['entropy']
-                    }
-                    _ = frackture_v3_3_reconstruct(invalid_payload)
-                    fault_injection_passed = False
-                    fault_injection_errors.append("Invalid hex not detected")
-                except (ValueError, IndexError, KeyError):
-                    pass  # Expected behavior
-                
+
+                # Raw payload tampering (structural corruption)
+                mutated_symbolic = "".join("FF" if c != "F" else "00" for c in payload["symbolic"])
+                _expect_value_error(
+                    "Raw symbolic",
+                    lambda: frackture_v3_3_reconstruct({"symbolic": mutated_symbolic, "entropy": payload["entropy"]}),
+                )
+
+                mutated_entropy = list(payload["entropy"])
+                mutated_entropy[0] = float("nan")
+                _expect_value_error(
+                    "Raw entropy",
+                    lambda: frackture_v3_3_reconstruct({"symbolic": payload["symbolic"], "entropy": mutated_entropy}),
+                )
+
+                _expect_value_error(
+                    "Raw metadata",
+                    lambda: frackture_v3_3_reconstruct({**payload_with_meta, "tier_name": 123}),
+                )
+
+                _expect_value_error("Raw empty", lambda: frackture_v3_3_reconstruct({}))
+
+                _expect_value_error(
+                    "Raw invalid hex",
+                    lambda: frackture_v3_3_reconstruct({"symbolic": "INVALID_HEX_!@#$%", "entropy": payload["entropy"]}),
+                )
+
+                # Encrypted payload tampering (integrity corruption)
+                encrypted = frackture_encrypt_payload(payload_with_meta, fault_injection_key)
+
+                sym = encrypted["data"]["symbolic"]
+                flipped_sym = ("0" if sym[0] != "0" else "1") + sym[1:]
+                tampered = copy.deepcopy(encrypted)
+                tampered["data"]["symbolic"] = flipped_sym
+                _expect_value_error(
+                    "Encrypted symbolic",
+                    lambda: frackture_decrypt_payload(tampered, fault_injection_key),
+                )
+
+                tampered = copy.deepcopy(encrypted)
+                tampered["data"]["entropy"][0] = float(tampered["data"]["entropy"][0]) + 1.0
+                _expect_value_error(
+                    "Encrypted entropy",
+                    lambda: frackture_decrypt_payload(tampered, fault_injection_key),
+                )
+
+                tampered = copy.deepcopy(encrypted)
+                tampered["data"]["tier_name"] = "tampered"
+                _expect_value_error(
+                    "Encrypted payload metadata",
+                    lambda: frackture_decrypt_payload(tampered, fault_injection_key),
+                )
+
+                tampered = copy.deepcopy(encrypted)
+                tampered["metadata"]["key_id"] = "deadbeef"
+                _expect_value_error(
+                    "Encrypted envelope metadata",
+                    lambda: frackture_decrypt_payload(tampered, fault_injection_key),
+                )
+
+                tampered = copy.deepcopy(encrypted)
+                tampered["signature"] = "0" * 64
+                _expect_value_error(
+                    "Encrypted signature",
+                    lambda: frackture_decrypt_payload(tampered, fault_injection_key),
+                )
+
             except Exception as e:
                 fault_injection_passed = False
                 fault_injection_errors.append(f"Fault injection test error: {str(e)}")
