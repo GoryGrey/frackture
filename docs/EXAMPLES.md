@@ -7,6 +7,7 @@ This document provides copy-pastable examples for all Frackture workflows, from 
 ## Table of Contents
 
 - [Basic Usage](#basic-usage)
+- [Use Case Recipes](#use-case-recipes)
 - [Compression & Fingerprinting](#compression--fingerprinting)
 - [Encryption & Decryption](#encryption--decryption)
 - [Hashing & Integrity](#hashing--integrity)
@@ -59,17 +60,15 @@ For full control over the compression process:
 # Import advanced components
 import importlib.util
 
-# Load frackture module
+# Load frackture module (repo-local; the filename contains a space)
 spec = importlib.util.spec_from_file_location("frackture", "frackture (2).py")
 frackture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(frackture)
 
-# Use the advanced functions
-from frackture import (
-    frackture_preprocess_universal_v2_6 as preprocess,
-    frackture_v3_3_safe as compress,
-    frackture_v3_3_reconstruct as decompress
-)
+# Alias the advanced functions
+preprocess = frackture.frackture_preprocess_universal_v2_6
+compress = frackture.frackture_v3_3_safe
+decompress = frackture.frackture_v3_3_reconstruct
 
 # Process data with manual tier control
 data = "Hello, Frackture!"
@@ -142,6 +141,84 @@ def load_frackture():
 # Usage:
 frackture = load_frackture()
 preprocessed = frackture.frackture_preprocess_universal_v2_6("data")
+```
+
+---
+
+## Use Case Recipes
+
+See **[docs/USE_CASES.md](./USE_CASES.md)** for deeper decision guidance and benchmark-backed trade-offs.
+
+### Deterministic “embedding-like” vectors (non-semantic)
+
+```python
+import importlib.util
+import numpy as np
+
+spec = importlib.util.spec_from_file_location("frackture", "frackture (2).py")
+frackture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(frackture)
+
+payload = frackture.compress_simple(
+    "error: timeout calling service A",
+    tier=frackture.CompressionTier.DEFAULT,
+    optimize=True,
+    return_format="compact",
+)
+
+vec = frackture.decompress_simple(payload)
+print(vec.shape)  # (768,)
+```
+
+### Lossy dedup candidates (exact + near-duplicate)
+
+```python
+import importlib.util
+import numpy as np
+
+spec = importlib.util.spec_from_file_location("frackture", "frackture (2).py")
+frackture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(frackture)
+
+store = {}  # id -> (payload_bytes, reconstructed_vec)
+
+def l2(a: np.ndarray, b: np.ndarray) -> float:
+    d = a.astype(np.float32) - b.astype(np.float32)
+    return float(np.sqrt(np.dot(d, d)))
+
+for doc_id, data in {
+    "a": b"hello world\n" * 1000,
+    "b": b"hello world\n" * 1000 + b"!",
+}.items():
+    payload = frackture.compress_simple(data, optimize=True)
+    vec = frackture.decompress_simple(payload)
+
+    for other_id, (other_payload, other_vec) in store.items():
+        if payload == other_payload:
+            print("exact duplicate", doc_id, other_id)
+        elif l2(vec, other_vec) < 2.0:
+            print("near-duplicate candidate", doc_id, other_id)
+
+    store[doc_id] = (payload, vec)
+```
+
+### Content addressing (SHA-256 + Frackture sketch)
+
+```python
+import importlib.util
+import hashlib
+
+spec = importlib.util.spec_from_file_location("frackture", "frackture (2).py")
+frackture = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(frackture)
+
+blob = b"example payload" * 1000
+sha256_hex = hashlib.sha256(blob).hexdigest()
+fr_bytes = frackture.compress_simple(blob, return_format="compact")
+
+fr_payload = frackture.deserialize_frackture_payload(fr_bytes)
+print("sha256:", sha256_hex)
+print("frackture symbolic:", fr_payload.symbolic.hex())
 ```
 
 ---

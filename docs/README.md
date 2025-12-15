@@ -8,6 +8,7 @@ Welcome to the comprehensive documentation for Frackture, the unified symbolic c
 
 ### Getting Started
 - **[Main README](../README.md)** - Installation, quick start, and overview
+- **[Use Cases](./USE_CASES.md)** - Decision-driven guidance (when to use Frackture vs gzip/SHA-256/embeddings)
 - **[Examples](./EXAMPLES.md)** - Copy-paste code examples for all workflows
 - **[FAQ](./FAQ.md)** - Frequently asked questions and troubleshooting
 
@@ -43,7 +44,7 @@ Welcome to the comprehensive documentation for Frackture, the unified symbolic c
 → Check [FAQ - Troubleshooting](./FAQ.md#troubleshooting)
 
 **...understand use cases**
-→ Read [FAQ - Use Case Questions](./FAQ.md#use-case-questions)
+→ Read **[Use Cases](./USE_CASES.md)**
 
 **...contribute**
 → Read [FAQ - Getting Help](./FAQ.md#getting-help)
@@ -115,6 +116,8 @@ Frequently asked questions:
 ---
 
 ## 🎯 Use Case Documentation
+
+- **[Use Cases](./USE_CASES.md)** - Decision tree + detailed guidance (embeddings vs gzip vs SHA-256)
 
 ### Data Fingerprinting
 - **[Examples - Fingerprinting](./EXAMPLES.md#compression--fingerprinting)**
