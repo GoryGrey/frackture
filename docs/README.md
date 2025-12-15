@@ -15,6 +15,7 @@ Welcome to the comprehensive documentation for Frackture, the unified symbolic c
 - **[Architecture](./ARCHITECTURE.md)** - Deep dive into dual-channel design, algorithms, and implementation
 - **[Benchmarking](./BENCHMARKING.md)** - Complete methodology, metrics definitions, and interpretation guide
 - **[Security](./SECURITY.md)** - Security properties, threat model, and best practices
+- **[Limitations](./Limitations.md)** - Known constraints, guarantees, tiny tier caveats, and trade-offs
 
 ### Verification & Performance
 - **[Test Report](../TEST_REPORT.md)** - Comprehensive test coverage and results
@@ -44,6 +45,9 @@ Welcome to the comprehensive documentation for Frackture, the unified symbolic c
 
 **...understand use cases**
 → Read [FAQ - Use Case Questions](./FAQ.md#use-case-questions)
+
+**...understand limitations and constraints**
+→ Read [Limitations](./Limitations.md)
 
 **...contribute**
 → Read [FAQ - Getting Help](./FAQ.md#getting-help)
@@ -86,6 +90,19 @@ Comprehensive security analysis:
 - Compliance considerations (FIPS, GDPR, HIPAA, PCI DSS)
 
 **Read if:** You need to deploy Frackture in production or security-sensitive contexts.
+
+### [Limitations.md](./Limitations.md)
+Known constraints and guarantees:
+- Payload sizing and serialization formats
+- Tiny tier caveats and collision resistance
+- Reconstruction error bounds (baseline vs. optimized MSE)
+- Throughput variability by tier
+- Fault injection guarantees and limitations
+- Determinism guarantees
+- Compression vs. fingerprinting trade-offs
+- Production recommendations and monitoring
+
+**Read if:** You need to understand trade-offs, constraints, and when Frackture is (or isn't) appropriate.
 
 ### [EXAMPLES.md](./EXAMPLES.md)
 Copy-paste code examples:

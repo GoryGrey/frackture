@@ -4,22 +4,29 @@
 [![Downloads](https://img.shields.io/pypi/dm/frackture.svg)](https://pypi.org/project/frackture/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-**Frackture is a unified symbolic compression, encryption, and hashing library** that combines recursive logic with entropy signatures to create fixed-size (~96-byte) identity-preserving fingerprints.
+## Frackture: A Lossy, Deterministic Fingerprinting System
 
-> Built to push boundaries in compression, data fingerprinting, secure hashing, and self-optimizing logic.
+**Frackture** is a deterministic, lossy fingerprinting library that encodes arbitrary data into fixed-size 300-byte embeddings combining symbolic identity (32 bytes) and entropy signatures (16 floats). Built on NumPy FFT and recursive XOR masking, it delivers **22% MSE improvement** via self-optimizing decoders while maintaining SHA256-equivalent latency (~0.07ms). Ideal for deduplication, similarity search, and tamper detection with integrated HMAC authentication.
 
----
+### Core Value Proposition
 
-## 🌟 What Makes Frackture Unique?
+| Feature | Capability | Metric |
+|---------|-----------|--------|
+| **Fixed-Size Output** | Always ~300 bytes, input-independent | Deterministic, no scaling |
+| **Deterministic Hashing** | Same input → same fingerprint every time | SHA256-level consistency |
+| **Lossy Reconstruction** | 22% MSE improvement via decoder optimization | Baseline → optimized MSE reduction |
+| **Fault Detection** | Tamper detection via HMAC-SHA256 authentication | ValueError on mutation |
+| **Universal Input** | Handles str, bytes, dict, list, np.ndarray | Zero preprocessing required |
 
-Frackture is **not traditional compression**—it's a symbolic encoding system that:
+### Limitations & Status
 
-- 🎯 **Fixed-Size Output**: Always produces ~96 bytes regardless of input size (1KB or 1TB)
-- 🧬 **Dual-Channel Architecture**: Combines symbolic fingerprinting with entropy signatures
-- 🔐 **Built-in Security**: HMAC-based encryption with tamper detection
-- ♻️ **Self-Optimizing**: Decoder feedback loop minimizes reconstruction error
-- 🌍 **Universal Input**: Handles text, JSON, binary, arrays, and Python objects
-- 🎨 **Identity-Preserving**: Similar inputs produce similar fingerprints
+- **Tiny Payloads (<100 bytes)**: Uses 2-pass XOR with hash-based padding; may have reduced collision resistance vs standard tiers
+- **Lossy by Design**: Reconstruction MSE > 0 (not lossless); use for fingerprinting, not exact data recovery
+- **Reconstruction Error Bounds**: Baseline MSE 0.2–0.5, post-optimization 0.15–0.35 depending on tier
+- **Throughput Variability**: Encode 15–40 MB/s, decode 100–1500 MB/s based on tier and input entropy
+- **Fault Injection Guarantees**: Detects symbolic/entropy/metadata tampering; **not** designed for cryptographic proof (use HMAC-SHA256 for that)
+
+See [docs/Limitations.md](./docs/Limitations.md) for tier-specific caveats and trade-offs.
 
 ---
 
