@@ -67,27 +67,35 @@ Replaced synthetic Lorem Ipsum generators with **15+ curated, redistribution-saf
 
 ```bash
 # Size-specific
---small-only          # 100 KB datasets
---large-only          # 1 MB datasets
---tiny-only           # <100 B edge cases
---extreme-only        # 100+ MB (slow)
---extreme             # Enable extreme in addition to normal
---no-tiny             # Skip tiny tests
+--small-only                # 100 KB datasets
+--large-only                # 1 MB datasets
+--tiny-only                 # <100 B edge cases
+--extreme-only              # 100+ MB (slow)
+--extreme                   # Enable extreme in addition to normal
+--no-tiny                   # Skip tiny tests
+
+# Full-tier dataset coverage (real datasets)
+--all-tiers                 # All tiers across all categories
+--tiers tiny,small,medium   # Specific tier subset
+--categories text,binary    # Filter categories
+--competition-report        # All tiers + comprehensive gzip/brotli sweeps + win-rate summary
 
 # Dataset mode
---real                # Use real datasets (default if available)
---synthetic           # Use legacy Lorem Ipsum generators
+--real                      # Use real datasets (default if available)
+--synthetic                 # Use legacy Lorem Ipsum generators
 
 # Verification
---verify-only         # Skip gzip/brotli, focus on Frackture validation
---detailed            # Enable diagnostic output
+--verify-only               # Skip gzip/brotli, focus on Frackture validation
+--detailed                  # Enable diagnostic output
 
 # Compression tuning
---gzip-level [1-9]    # Default: 6
---brotli-quality [0-11]  # Default: 6
+--gzip-level [1-9]          # Single gzip level
+--brotli-quality [0-11]     # Single brotli quality
+--gzip-levels 1 6 9         # Sweep multiple gzip levels (defaults to [1,6,9] when not specified)
+--brotli-qualities 4 6 11   # Sweep multiple brotli qualities (defaults to [4,6,11] when not specified)
 
 # Output
---output-dir PATH     # Custom results directory
+--output-dir PATH           # Custom results directory
 ```
 
 ### 4. Dataset CLI Tool
@@ -108,6 +116,8 @@ python dataset_cli.py mixed --combination <name> --size <bytes>
 **Console**: Pretty tables with immediate feedback
 **JSON**: Structured data for automation/analysis
 **Markdown**: Human-readable reports for sharing
+
+**New:** JSON and Markdown outputs now include a `competition_summary` section (overall + per tier) plus per-dataset comparison records so win rates can be tracked over time.
 
 All results timestamped and saved to `benchmarks/results/`.
 

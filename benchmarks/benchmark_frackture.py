@@ -74,6 +74,7 @@ except ImportError:
 @dataclass
 class BenchmarkResult:
     """Container for benchmark results"""
+
     name: str
     dataset_type: str
     original_size: int
@@ -87,11 +88,11 @@ class BenchmarkResult:
     peak_memory_mb: float
     success: bool
     error: str = ""
-    
+
     # Competitor settings (for multi-level sweeps)
     gzip_level: Optional[int] = None
     brotli_quality: Optional[int] = None
-    
+
     # New verification metrics
     symbolic_bytes: int = 0
     entropy_bytes: int = 0
@@ -106,11 +107,22 @@ class BenchmarkResult:
     determinism_drifts: int = 0
     fault_injection_passed: bool = False
     fault_injection_errors: Optional[List[str]] = None
-    # Tier metadata (added for full-tier benchmarks)
+
+    # Dataset metadata (tier/category)
     tier_name: Optional[str] = None
     category_name: Optional[str] = None
     actual_size_bytes: Optional[int] = None
     target_size_bytes: Optional[int] = None
+
+    # Frackture internal compression tier (tiny/default/large)
+    frackture_tier_name: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        base = asdict(self)
+        for k, v in vars(self).items():
+            if k not in base:
+                base[k] = v
+        return base
 
 
 class DatasetGenerator:
@@ -484,8 +496,7 @@ class BenchmarkRunner:
                 determinism_drifts=determinism_drifts,
                 fault_injection_passed=fault_injection_passed,
                 fault_injection_errors=fault_injection_errors or [],
-                # Tier information
-                tier_name=tier.value if tier else "default"
+                frackture_tier_name=tier.value if tier else "default"
             )
             
         except Exception as e:
@@ -1132,24 +1143,35 @@ class ResultFormatter:
         print(f"{'='*140}\n")
     
     @staticmethod
-    def save_json(results_by_dataset: Dict[str, List[BenchmarkResult]], output_path: Path):
+    def save_json(
+        results_by_dataset: Dict[str, List[BenchmarkResult]],
+        output_path: Path,
+        *,
+        competition_summary: Optional[Dict[str, Any]] = None,
+        competition_records: Optional[Dict[str, Any]] = None,
+        benchmark_config: Optional[Dict[str, Any]] = None,
+    ):
         """Save results as JSON with enhanced verification metrics"""
         output = {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "benchmark_version": "2.0.0",
+            "benchmark_version": "2.1.0",
             "enhanced_metrics": {
                 "payload_sizing": "Symbolic bytes, entropy bytes, serialized total, 96B validation",
                 "reconstruction_quality": "MSE baseline vs optimized, lossless status",
                 "optimization": "MSE improvement percentage, trials count",
                 "determinism": "Multiple encoding tests, drift detection",
-                "fault_injection": "Payload mutation tests, error handling validation"
+                "fault_injection": "Payload mutation tests, error handling validation",
+                "competition": "Frackture vs Gzip/Brotli per-config and per-tier win/loss summary",
             },
-            "results": {}
+            "benchmark_config": benchmark_config or {},
+            "competition_summary": competition_summary or {},
+            "competition_records": competition_records or {},
+            "results": {},
         }
         
         for dataset_name, results in results_by_dataset.items():
             output["results"][dataset_name] = [
-                asdict(r) for r in results
+                r.to_dict() for r in results
             ]
         
         with open(output_path, 'w') as f:
@@ -1159,13 +1181,19 @@ class ResultFormatter:
         print(f"📊 Enhanced metrics version: {output['benchmark_version']}")
     
     @staticmethod
-    def save_markdown(results_by_dataset: Dict[str, List[BenchmarkResult]], output_path: Path):
+    def save_markdown(
+        results_by_dataset: Dict[str, List[BenchmarkResult]],
+        output_path: Path,
+        *,
+        competition_summary: Optional[Dict[str, Any]] = None,
+        benchmark_config: Optional[Dict[str, Any]] = None,
+    ):
         """Save results as Markdown with enhanced verification metrics"""
         lines = [
             "# Frackture Benchmark Results",
             "",
             f"**Generated:** {time.strftime('%Y-%m-%d %H:%M:%S')}",
-            f"**Enhanced Metrics Version:** 2.0.0",
+            f"**Enhanced Metrics Version:** 2.1.0",
             "",
             "## New Verification Metrics",
             "",
@@ -1174,10 +1202,53 @@ class ResultFormatter:
             "- **Optimization**: MSE improvement percentage, trials count",
             "- **Determinism**: Multiple encoding tests, drift detection",
             "- **Fault Injection**: Payload mutation tests, error handling validation",
+            "- **Competition Summary**: Frackture vs Gzip/Brotli wins by tier and by configuration",
             "",
-            "---",
-            ""
         ]
+
+        if benchmark_config:
+            lines.extend([
+                "## Benchmark Configuration",
+                "",
+                f"- **Gzip levels:** {benchmark_config.get('gzip_levels', [])}",
+                f"- **Brotli qualities:** {benchmark_config.get('brotli_qualities', [])}",
+                f"- **Real datasets:** {benchmark_config.get('use_real_datasets', False)}",
+                f"- **All tiers:** {benchmark_config.get('all_tiers', False)}",
+                "",
+            ])
+
+        overall_competition = (competition_summary or {}).get('overall') if competition_summary else None
+        if overall_competition and overall_competition.get('total_comparisons', 0) > 0:
+            lines.extend([
+                "## Competition Summary (Frackture vs Gzip/Brotli)",
+                "",
+                "| Scope | Total Comparisons | Wins (Ratio) | Win Rate (Ratio) | Wins (Throughput) | Win Rate (Throughput) |",
+                "|---|---:|---:|---:|---:|---:|",
+                f"| Overall | {overall_competition.get('total_comparisons', 0)} | {overall_competition.get('frackture_wins_ratio', 0)} | {overall_competition.get('win_rate_ratio', 0.0) * 100:.1f}% | {overall_competition.get('frackture_wins_throughput', 0)} | {overall_competition.get('win_rate_throughput', 0.0) * 100:.1f}% |",
+                "",
+            ])
+
+            by_tier = (competition_summary or {}).get('by_tier', {})
+            if by_tier:
+                lines.extend([
+                    "### Win Rates by Tier",
+                    "",
+                    "| Tier | Total Comparisons | Wins (Ratio) | Win Rate (Ratio) |",
+                    "|---|---:|---:|---:|",
+                ])
+                for tier_name, bucket in sorted(by_tier.items()):
+                    total = bucket.get('total_comparisons', 0)
+                    if total == 0:
+                        continue
+                    lines.append(
+                        f"| {tier_name} | {total} | {bucket.get('frackture_wins_ratio', 0)} | {bucket.get('win_rate_ratio', 0.0) * 100:.1f}% |"
+                    )
+                lines.append("")
+
+        lines.extend([
+            "---",
+            "",
+        ])
         
         for dataset_name, results in results_by_dataset.items():
             lines.append(f"## Dataset: {dataset_name}")
@@ -1349,6 +1420,20 @@ def run_benchmark_suite(
     gzip_levels = _dedupe_ints(gzip_levels)
     brotli_qualities = _dedupe_ints(brotli_qualities)
 
+    def _annotate_dataset_metadata(
+        results: List[BenchmarkResult],
+        *,
+        tier_name: str,
+        category_name: str,
+        actual_size_bytes: int,
+        target_size_bytes: int,
+    ) -> None:
+        for r in results:
+            r.tier_name = tier_name
+            r.category_name = category_name
+            r.actual_size_bytes = actual_size_bytes
+            r.target_size_bytes = target_size_bytes
+
     print("\n" + "="*120)
     print("🔥 FRACKTURE ENHANCED BENCHMARK SUITE 🔥")
     print("="*120)
@@ -1433,7 +1518,21 @@ def run_benchmark_suite(
                     result = BenchmarkRunner.benchmark_brotli(data, quality=quality)
                     result.dataset_type = dataset_name
                     results.append(result)
-            
+
+            category_name = "synthetic"
+            target_size_bytes = 100 * 1024
+            if use_real_datasets and repo and dataset_name in repo.datasets:
+                category_name = repo.datasets[dataset_name].category
+                target_size_bytes = repo.size_tiers['medium'].target
+
+            _annotate_dataset_metadata(
+                results,
+                tier_name="medium",
+                category_name=category_name,
+                actual_size_bytes=len(data),
+                target_size_bytes=target_size_bytes,
+            )
+
             all_results[f"small_{dataset_name}"] = results
             ResultFormatter.print_table(results, f"small_{dataset_name}")
     
@@ -1494,7 +1593,21 @@ def run_benchmark_suite(
                     result = BenchmarkRunner.benchmark_brotli(data, quality=quality)
                     result.dataset_type = dataset_name
                     results.append(result)
-            
+
+            category_name = "synthetic"
+            target_size_bytes = 1 * 1024 * 1024
+            if use_real_datasets and repo and dataset_name in repo.datasets:
+                category_name = repo.datasets[dataset_name].category
+                target_size_bytes = repo.size_tiers['large'].target
+
+            _annotate_dataset_metadata(
+                results,
+                tier_name="large",
+                category_name=category_name,
+                actual_size_bytes=len(data),
+                target_size_bytes=target_size_bytes,
+            )
+
             all_results[f"large_{dataset_name}"] = results
             ResultFormatter.print_table(results, f"large_{dataset_name}")
     
@@ -1547,7 +1660,15 @@ def run_benchmark_suite(
                     result = BenchmarkRunner.benchmark_brotli(data, quality=quality)
                     result.dataset_type = dataset_name
                     results.append(result)
-            
+
+            _annotate_dataset_metadata(
+                results,
+                tier_name="tiny",
+                category_name="synthetic",
+                actual_size_bytes=len(data),
+                target_size_bytes=len(data),
+            )
+
             all_results[f"tiny_{dataset_name}"] = results
             ResultFormatter.print_table(results, f"tiny_{dataset_name}")
     
@@ -1600,7 +1721,15 @@ def run_benchmark_suite(
             
             # Skip Brotli for extreme datasets due to performance
             print("  - Skipping Brotli (performance reasons)")
-            
+
+            _annotate_dataset_metadata(
+                results,
+                tier_name="extreme",
+                category_name="synthetic",
+                actual_size_bytes=len(data),
+                target_size_bytes=len(data),
+            )
+
             all_results[f"extreme_{dataset_name}"] = results
             ResultFormatter.print_table(results, f"extreme_{dataset_name}")
     
@@ -1736,19 +1865,19 @@ def run_benchmark_suite(
                                 else:
                                     print(f"  - Skipping Brotli (tier too large: {tier_name})")
                                 
+                                _annotate_dataset_metadata(
+                                    results,
+                                    tier_name=tier_name,
+                                    category_name=category_name,
+                                    actual_size_bytes=actual_size,
+                                    target_size_bytes=tier_info.target,
+                                )
+
                                 # Store results with tiered naming
                                 all_results[tiered_dataset_name] = results
-                                
+
                                 # Print summary table for this dataset
                                 ResultFormatter.print_table(results, tiered_dataset_name)
-                                
-                                # Add tier metadata to results for JSON output
-                                for result in results:
-                                    if hasattr(result, 'dataset_type'):
-                                        result.tier_name = tier_name
-                                        result.category_name = category_name
-                                        result.actual_size_bytes = actual_size
-                                        result.target_size_bytes = tier_info.target
                                 
                             except Exception as e:
                                 failed_tests += 1
@@ -1767,14 +1896,161 @@ def run_benchmark_suite(
                 import traceback
                 traceback.print_exc()
     
+    def _init_competition_bucket() -> Dict[str, Any]:
+        return {
+            "total_comparisons": 0,
+            "frackture_wins_ratio": 0,
+            "frackture_losses_ratio": 0,
+            "frackture_ties_ratio": 0,
+            "frackture_wins_throughput": 0,
+            "frackture_losses_throughput": 0,
+            "frackture_ties_throughput": 0,
+            "gzip_by_level": {},
+            "brotli_by_quality": {},
+            "win_rate_ratio": 0.0,
+            "win_rate_throughput": 0.0,
+        }
+
+    def _finalize_bucket(bucket: Dict[str, Any]) -> Dict[str, Any]:
+        total = bucket.get("total_comparisons", 0) or 0
+        if total > 0:
+            bucket["win_rate_ratio"] = bucket.get("frackture_wins_ratio", 0) / total
+            bucket["win_rate_throughput"] = bucket.get("frackture_wins_throughput", 0) / total
+        else:
+            bucket["win_rate_ratio"] = 0.0
+            bucket["win_rate_throughput"] = 0.0
+        return bucket
+
+    def _update_bucket(bucket: Dict[str, Any], *, ratio_win: Optional[bool], throughput_win: Optional[bool]) -> None:
+        bucket["total_comparisons"] += 1
+
+        if ratio_win is True:
+            bucket["frackture_wins_ratio"] += 1
+        elif ratio_win is False:
+            bucket["frackture_losses_ratio"] += 1
+        else:
+            bucket["frackture_ties_ratio"] += 1
+
+        if throughput_win is True:
+            bucket["frackture_wins_throughput"] += 1
+        elif throughput_win is False:
+            bucket["frackture_losses_throughput"] += 1
+        else:
+            bucket["frackture_ties_throughput"] += 1
+
+    competition_records: Dict[str, Any] = {}
+    competition_summary: Dict[str, Any] = {
+        "overall": _init_competition_bucket(),
+        "by_tier": {},
+    }
+
+    for dataset_key, results in all_results.items():
+        frackture_result = next((r for r in results if r.name == "Frackture" and r.success), None)
+        if not frackture_result:
+            continue
+
+        tier_name = frackture_result.tier_name or "unknown"
+        category_name = frackture_result.category_name or "unknown"
+
+        dataset_record = {
+            "dataset": dataset_key,
+            "tier_name": tier_name,
+            "category_name": category_name,
+            "frackture": {
+                "compression_ratio": frackture_result.compression_ratio,
+                "encode_throughput": frackture_result.encode_throughput,
+                "original_size": frackture_result.original_size,
+            },
+            "comparisons": [],
+        }
+
+        tier_bucket = competition_summary["by_tier"].setdefault(tier_name, _init_competition_bucket())
+
+        for competitor in results:
+            if not competitor.success:
+                continue
+            if competitor.gzip_level is None and competitor.brotli_quality is None:
+                continue
+
+            ratio_win: Optional[bool]
+            throughput_win: Optional[bool]
+
+            if abs(frackture_result.compression_ratio - competitor.compression_ratio) < 1e-12:
+                ratio_win = None
+            else:
+                ratio_win = frackture_result.compression_ratio > competitor.compression_ratio
+
+            if abs(frackture_result.encode_throughput - competitor.encode_throughput) < 1e-12:
+                throughput_win = None
+            else:
+                throughput_win = frackture_result.encode_throughput > competitor.encode_throughput
+
+            comparison = {
+                "competitor": competitor.name,
+                "gzip_level": competitor.gzip_level,
+                "brotli_quality": competitor.brotli_quality,
+                "competitor_compression_ratio": competitor.compression_ratio,
+                "competitor_encode_throughput": competitor.encode_throughput,
+                "frackture_wins_ratio": ratio_win,
+                "frackture_wins_throughput": throughput_win,
+            }
+            dataset_record["comparisons"].append(comparison)
+
+            _update_bucket(competition_summary["overall"], ratio_win=ratio_win, throughput_win=throughput_win)
+            _update_bucket(tier_bucket, ratio_win=ratio_win, throughput_win=throughput_win)
+
+            if competitor.gzip_level is not None:
+                key = str(competitor.gzip_level)
+                cfg_bucket = competition_summary["overall"]["gzip_by_level"].setdefault(key, _init_competition_bucket())
+                _update_bucket(cfg_bucket, ratio_win=ratio_win, throughput_win=throughput_win)
+            if competitor.brotli_quality is not None:
+                key = str(competitor.brotli_quality)
+                cfg_bucket = competition_summary["overall"]["brotli_by_quality"].setdefault(key, _init_competition_bucket())
+                _update_bucket(cfg_bucket, ratio_win=ratio_win, throughput_win=throughput_win)
+
+        competition_records[dataset_key] = dataset_record
+
+    _finalize_bucket(competition_summary["overall"])
+    for tier_name, bucket in competition_summary["by_tier"].items():
+        _finalize_bucket(bucket)
+    for bucket in competition_summary["overall"]["gzip_by_level"].values():
+        _finalize_bucket(bucket)
+    for bucket in competition_summary["overall"]["brotli_by_quality"].values():
+        _finalize_bucket(bucket)
+
     # Save results
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     json_path = output_dir / f"benchmark_results_{timestamp}.json"
     md_path = output_dir / f"benchmark_results_{timestamp}.md"
-    
-    ResultFormatter.save_json(all_results, json_path)
-    ResultFormatter.save_markdown(all_results, md_path)
-    
+
+    benchmark_config = {
+        "gzip_levels": gzip_levels,
+        "brotli_qualities": brotli_qualities,
+        "use_real_datasets": use_real_datasets,
+        "all_tiers": all_tiers,
+        "specific_tiers": specific_tiers,
+        "include_huge": include_huge,
+        "specific_categories": specific_categories,
+        "small_datasets": small_datasets,
+        "large_datasets": large_datasets,
+        "tiny_datasets": tiny_datasets,
+        "extreme_datasets": extreme_datasets,
+    }
+
+    ResultFormatter.save_json(
+        all_results,
+        json_path,
+        competition_summary=competition_summary,
+        competition_records=competition_records,
+        benchmark_config=benchmark_config,
+    )
+    ResultFormatter.save_markdown(
+        all_results,
+        md_path,
+        competition_summary=competition_summary,
+        benchmark_config=benchmark_config,
+    )
+
     print("\n" + "="*100)
     print("✅ BENCHMARK SUITE COMPLETED")
     print("="*100)
@@ -1864,6 +2140,12 @@ Examples:
         type=str,
         help="Run benchmarks on specific categories (e.g., 'text,binary,code,structured,mixed')"
     )
+
+    parser.add_argument(
+        "--competition-report",
+        action="store_true",
+        help="Run all real dataset tiers and sweep gzip/brotli configurations to generate a comprehensive competition_summary (win/loss rates by tier)"
+    )
     
     # Output and mode options
     parser.add_argument(
@@ -1927,32 +2209,52 @@ Examples:
     
     args = parser.parse_args()
 
-    gzip_levels = args.gzip_levels if args.gzip_levels is not None else [args.gzip_level]
-    brotli_qualities = args.brotli_qualities if args.brotli_qualities is not None else [args.brotli_quality]
-    
-    # Determine which datasets to run
-    small = not (args.large_only or args.tiny_only or args.extreme_only or args.all_tiers or args.tiers)
-    large = not (args.small_only or args.tiny_only or args.extreme_only or args.all_tiers or args.tiers)
-    tiny = not (args.small_only or args.large_only or args.extreme_only or args.all_tiers or args.tiers) and not args.no_tiny
-    extreme = args.extreme_only or args.extreme
-    
+    DEFAULT_GZIP_LEVELS = [1, 6, 9]
+    DEFAULT_BROTLI_QUALITIES = [4, 6, 11]
+
+    def _flag_present(flag: str) -> bool:
+        return flag in sys.argv
+
+    if args.competition_report:
+        gzip_levels = list(range(1, 10))
+        brotli_qualities = list(range(0, 12))
+    else:
+        gzip_levels = args.gzip_levels if args.gzip_levels is not None else (
+            [args.gzip_level] if _flag_present("--gzip-level") else DEFAULT_GZIP_LEVELS
+        )
+        brotli_qualities = args.brotli_qualities if args.brotli_qualities is not None else (
+            [args.brotli_quality] if _flag_present("--brotli-quality") else DEFAULT_BROTLI_QUALITIES
+        )
+
     # Parse tier selections
-    all_tiers = args.all_tiers
+    all_tiers = args.all_tiers or args.competition_report
     specific_tiers = None
-    if args.tiers:
+    if args.tiers and not args.competition_report:
         specific_tiers = [t.strip() for t in args.tiers.split(',')]
     include_huge = args.include_huge
-    
+
     # Parse category selections
     specific_categories = None
     if args.categories:
         specific_categories = [c.strip() for c in args.categories.split(',')]
-    
+
+    # Determine which datasets to run
+    if args.competition_report:
+        small = False
+        large = False
+        tiny = False
+        extreme = False
+    else:
+        small = not (args.large_only or args.tiny_only or args.extreme_only or args.all_tiers or args.tiers)
+        large = not (args.small_only or args.tiny_only or args.extreme_only or args.all_tiers or args.tiers)
+        tiny = not (args.small_only or args.large_only or args.extreme_only or args.all_tiers or args.tiers) and not args.no_tiny
+        extreme = args.extreme_only or args.extreme
+
     # Determine dataset mode
     use_real = None  # Auto-detect
     if args.synthetic:
         use_real = False
-    elif args.real or all_tiers or specific_tiers:
+    elif args.real or all_tiers or specific_tiers or args.competition_report:
         use_real = True  # Tier-based benchmarks require real datasets
     
     print("\n🚀 Enhanced Frackture Benchmark Configuration:")

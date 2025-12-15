@@ -237,74 +237,148 @@ def analyze_by_size_tier(results_data):
     return summary
 
 def analyze_vs_gzip_brotli(results_data):
-    """Detailed comparison: Frackture vs Gzip and Brotli configurations."""
-    comparisons = {
-        'frackture': [],
-        'gzip_levels': defaultdict(list),
-        'brotli_qualities': defaultdict(list)
-    }
-    
-    for dataset, methods in results_data.items():
+    """Detailed comparison: Frackture vs Gzip and Brotli configurations.
+
+    Returns summary stats for configuration sweeps plus head-to-head win/loss counts.
+    """
+
+    def infer_dataset_tier(dataset_key: str, methods: list) -> str:
         for m in methods:
-            if m['name'] == 'Frackture':
-                comparisons['frackture'].append({
-                    'dataset': dataset,
-                    'ratio': m['compression_ratio'],
-                    'throughput': m['encode_throughput'],
-                    'size': m['original_size']
-                })
-            elif m.get('gzip_level') is not None:
-                level = m['gzip_level']
-                comparisons['gzip_levels'][level].append({
-                    'dataset': dataset,
-                    'ratio': m['compression_ratio'],
-                    'throughput': m['encode_throughput']
-                })
-            elif m.get('brotli_quality') is not None:
-                quality = m['brotli_quality']
-                comparisons['brotli_qualities'][quality].append({
-                    'dataset': dataset,
-                    'ratio': m['compression_ratio'],
-                    'throughput': m['encode_throughput']
-                })
-    
-    # Summarize
+            tier = m.get('tier_name')
+            if tier:
+                return str(tier)
+
+        if dataset_key.startswith('tiny_'):
+            return 'tiny'
+        if dataset_key.startswith('small_'):
+            return 'medium'
+        if dataset_key.startswith('large_'):
+            return 'large'
+        if dataset_key.startswith('extreme_'):
+            return 'extreme'
+
+        known = {'tiny', 'small', 'medium', 'large', 'xlarge', 'xxlarge', 'huge'}
+        parts = dataset_key.split('_')
+        if parts and parts[-1] in known:
+            return parts[-1]
+
+        return 'unknown'
+
+    frackture_metrics = []
+
+    gzip_raw = defaultdict(lambda: {'ratios': [], 'speeds': [], 'count': 0, 'wins_ratio': 0, 'wins_speed': 0, 'comparisons': 0})
+    brotli_raw = defaultdict(lambda: {'ratios': [], 'speeds': [], 'count': 0, 'wins_ratio': 0, 'wins_speed': 0, 'comparisons': 0})
+
+    by_tier = defaultdict(lambda: {'total_comparisons': 0, 'frackture_wins_ratio': 0, 'frackture_wins_speed': 0})
+
+    total_comparisons = 0
+    frackture_wins_ratio = 0
+    frackture_wins_speed = 0
+
+    for dataset, methods in results_data.items():
+        fr = next((m for m in methods if m.get('name') == 'Frackture' and m.get('success', True)), None)
+        if not fr:
+            continue
+
+        tier_name = infer_dataset_tier(dataset, methods)
+
+        fr_ratio = fr.get('compression_ratio', 0)
+        fr_speed = fr.get('encode_throughput', 0)
+        frackture_metrics.append({'ratio': fr_ratio, 'throughput': fr_speed, 'tier_name': tier_name})
+
+        for m in methods:
+            if not m.get('success', True):
+                continue
+
+            level = m.get('gzip_level')
+            quality = m.get('brotli_quality')
+            if level is None and quality is None:
+                continue
+
+            comp_ratio = m.get('compression_ratio', 0)
+            comp_speed = m.get('encode_throughput', 0)
+
+            total_comparisons += 1
+            by_tier[tier_name]['total_comparisons'] += 1
+
+            if fr_ratio > comp_ratio:
+                frackture_wins_ratio += 1
+                by_tier[tier_name]['frackture_wins_ratio'] += 1
+                ratio_win = True
+            else:
+                ratio_win = False
+
+            if fr_speed > comp_speed:
+                frackture_wins_speed += 1
+                by_tier[tier_name]['frackture_wins_speed'] += 1
+                speed_win = True
+            else:
+                speed_win = False
+
+            if level is not None:
+                bucket = gzip_raw[str(level)]
+                bucket['ratios'].append(comp_ratio)
+                bucket['speeds'].append(comp_speed)
+                bucket['count'] += 1
+                bucket['comparisons'] += 1
+                bucket['wins_ratio'] += 1 if ratio_win else 0
+                bucket['wins_speed'] += 1 if speed_win else 0
+
+            if quality is not None:
+                bucket = brotli_raw[str(quality)]
+                bucket['ratios'].append(comp_ratio)
+                bucket['speeds'].append(comp_speed)
+                bucket['count'] += 1
+                bucket['comparisons'] += 1
+                bucket['wins_ratio'] += 1 if ratio_win else 0
+                bucket['wins_speed'] += 1 if speed_win else 0
+
     summary = {
-        'frackture_avg_ratio': statistics.mean([x['ratio'] for x in comparisons['frackture']]) if comparisons['frackture'] else 0,
-        'frackture_avg_speed': statistics.mean([x['throughput'] for x in comparisons['frackture']]) if comparisons['frackture'] else 0,
+        'frackture_avg_ratio': statistics.mean([x['ratio'] for x in frackture_metrics]) if frackture_metrics else 0,
+        'frackture_avg_speed': statistics.mean([x['throughput'] for x in frackture_metrics]) if frackture_metrics else 0,
         'gzip_by_level': {},
         'brotli_by_quality': {},
-        'frackture_wins_ratio': 0,
-        'frackture_wins_speed': 0,
-        'total_comparisons': 0
+        'frackture_wins_ratio': frackture_wins_ratio,
+        'frackture_wins_speed': frackture_wins_speed,
+        'total_comparisons': total_comparisons,
+        'by_tier': {},
     }
-    
-    for level, data in comparisons['gzip_levels'].items():
+
+    for level, bucket in gzip_raw.items():
+        comparisons = bucket['comparisons']
         summary['gzip_by_level'][str(level)] = {
-            'avg_ratio': statistics.mean([x['ratio'] for x in data]),
-            'avg_speed': statistics.mean([x['throughput'] for x in data]),
-            'count': len(data)
+            'avg_ratio': statistics.mean(bucket['ratios']) if bucket['ratios'] else 0,
+            'avg_speed': statistics.mean(bucket['speeds']) if bucket['speeds'] else 0,
+            'count': bucket['count'],
+            'total_comparisons': comparisons,
+            'frackture_wins_ratio': bucket['wins_ratio'],
+            'frackture_wins_speed': bucket['wins_speed'],
+            'win_rate_ratio': (bucket['wins_ratio'] / comparisons) if comparisons > 0 else 0,
         }
-    
-    for quality, data in comparisons['brotli_qualities'].items():
+
+    for quality, bucket in brotli_raw.items():
+        comparisons = bucket['comparisons']
         summary['brotli_by_quality'][str(quality)] = {
-            'avg_ratio': statistics.mean([x['ratio'] for x in data]),
-            'avg_speed': statistics.mean([x['throughput'] for x in data]),
-            'count': len(data)
+            'avg_ratio': statistics.mean(bucket['ratios']) if bucket['ratios'] else 0,
+            'avg_speed': statistics.mean(bucket['speeds']) if bucket['speeds'] else 0,
+            'count': bucket['count'],
+            'total_comparisons': comparisons,
+            'frackture_wins_ratio': bucket['wins_ratio'],
+            'frackture_wins_speed': bucket['wins_speed'],
+            'win_rate_ratio': (bucket['wins_ratio'] / comparisons) if comparisons > 0 else 0,
         }
-    
-    # Count wins
-    if comparisons['frackture'] and comparisons['gzip_levels']:
-        for frac_entry in comparisons['frackture']:
-            for level, data in comparisons['gzip_levels'].items():
-                for gzip_entry in data:
-                    if frac_entry['dataset'] == gzip_entry['dataset']:
-                        summary['total_comparisons'] += 1
-                        if frac_entry['ratio'] > gzip_entry['ratio']:
-                            summary['frackture_wins_ratio'] += 1
-                        if frac_entry['throughput'] > gzip_entry['throughput']:
-                            summary['frackture_wins_speed'] += 1
-    
+
+    for tier_name, bucket in by_tier.items():
+        total = bucket['total_comparisons']
+        summary['by_tier'][tier_name] = {
+            **bucket,
+            'win_rate_ratio': (bucket['frackture_wins_ratio'] / total) if total > 0 else 0,
+            'win_rate_speed': (bucket['frackture_wins_speed'] / total) if total > 0 else 0,
+        }
+
+    summary['win_rate_ratio'] = (frackture_wins_ratio / total_comparisons) if total_comparisons > 0 else 0
+    summary['win_rate_speed'] = (frackture_wins_speed / total_comparisons) if total_comparisons > 0 else 0
+
     return summary
 
 def analyze_latency(results_data):
@@ -548,26 +622,62 @@ def main():
         f.write("\n")
         
         # Detailed Gzip/Brotli comparison
-        if compression_comparison['gzip_by_level'] or compression_comparison['brotli_by_quality']:
+        if compression_comparison.get('gzip_by_level') or compression_comparison.get('brotli_by_quality'):
             f.write("**Detailed Configuration Comparison:**\n\n")
-            
-            if compression_comparison['gzip_by_level']:
+
+            if compression_comparison.get('gzip_by_level'):
                 f.write("Gzip by Level:\n")
                 for level in sorted(compression_comparison['gzip_by_level'].keys(), key=int):
                     stats = compression_comparison['gzip_by_level'][level]
-                    f.write(f"- Level {level}: {stats['avg_ratio']:.2f}x @ {stats['avg_speed']:.2f} MB/s ({stats['count']} runs)\n")
+                    f.write(
+                        f"- Level {level}: {stats['avg_ratio']:.2f}x @ {stats['avg_speed']:.2f} MB/s "
+                        f"({stats.get('count', 0)} runs, Frackture ratio wins: {stats.get('frackture_wins_ratio', 0)}/{stats.get('total_comparisons', 0)})\n"
+                    )
                 f.write("\n")
-            
-            if compression_comparison['brotli_by_quality']:
+
+            if compression_comparison.get('brotli_by_quality'):
                 f.write("Brotli by Quality:\n")
                 for quality in sorted(compression_comparison['brotli_by_quality'].keys(), key=int):
                     stats = compression_comparison['brotli_by_quality'][quality]
-                    f.write(f"- Quality {quality}: {stats['avg_ratio']:.2f}x @ {stats['avg_speed']:.2f} MB/s ({stats['count']} runs)\n")
+                    f.write(
+                        f"- Quality {quality}: {stats['avg_ratio']:.2f}x @ {stats['avg_speed']:.2f} MB/s "
+                        f"({stats.get('count', 0)} runs, Frackture ratio wins: {stats.get('frackture_wins_ratio', 0)}/{stats.get('total_comparisons', 0)})\n"
+                    )
                 f.write("\n")
-        
-        f.write("**Summary:** Frackture achieves {:.2f}x compression on average. ".format(compression_comparison['frackture_avg_ratio']))
-        if compression_comparison['total_comparisons'] > 0:
-            f.write(f"In head-to-head matches, Frackture wins compression {compression_comparison['frackture_wins_ratio']}/{compression_comparison['total_comparisons']} times. ")
+
+        if compression_comparison.get('by_tier'):
+            f.write("**Win Rates by Tier (Compression Ratio):**\n\n")
+            f.write("| Tier | Comparisons | Frackture Wins | Win Rate |\n")
+            f.write("|---|---:|---:|---:|\n")
+            for tier_name, stats in sorted(compression_comparison['by_tier'].items()):
+                total = stats.get('total_comparisons', 0)
+                if total <= 0:
+                    continue
+                win_rate = stats.get('win_rate_ratio', 0.0) * 100
+                f.write(f"| {tier_name} | {total} | {stats.get('frackture_wins_ratio', 0)} | {win_rate:.1f}% |\n")
+            f.write("\n")
+
+            optimal_tiers = {'small', 'medium', 'large', 'xlarge', 'xxlarge', 'huge'}
+            warnings = []
+            for tier_name, stats in compression_comparison['by_tier'].items():
+                if tier_name not in optimal_tiers:
+                    continue
+                total = stats.get('total_comparisons', 0)
+                if total <= 0:
+                    continue
+                if stats.get('win_rate_ratio', 0.0) < 0.60:
+                    warnings.append(f"{tier_name} ({stats.get('win_rate_ratio', 0.0) * 100:.1f}%)")
+
+            if warnings:
+                f.write(f"⚠️ **Competition Warning:** Win rate < 60% in optimal tier(s): {', '.join(sorted(warnings))}\n\n")
+
+        f.write("**Summary:** Frackture achieves {:.2f}x compression on average. ".format(compression_comparison.get('frackture_avg_ratio', 0)))
+        if compression_comparison.get('total_comparisons', 0) > 0:
+            f.write(
+                f"In head-to-head matches (gzip + brotli sweeps), Frackture wins compression "
+                f"{compression_comparison.get('frackture_wins_ratio', 0)}/{compression_comparison.get('total_comparisons', 0)} "
+                f"times ({compression_comparison.get('win_rate_ratio', 0.0) * 100:.1f}%). "
+            )
         f.write("See weaknesses section for competitive gaps.\n")
         f.write("\n")
 
@@ -740,13 +850,19 @@ def main():
                 "worst_throughput_mbs": min(frackture_speeds) if frackture_speeds else 0
             },
             "q4_vs_gzip_brotli": {
-                "frackture_avg_ratio": compression_comparison['frackture_avg_ratio'],
-                "frackture_avg_throughput": compression_comparison['frackture_avg_speed'],
-                "gzip_by_level": compression_comparison['gzip_by_level'],
-                "brotli_by_quality": compression_comparison['brotli_by_quality'],
-                "frackture_wins_compression": compression_comparison['frackture_wins_ratio'],
-                "total_comparisons": compression_comparison['total_comparisons'],
-                "win_rate_percent": (100 * compression_comparison['frackture_wins_ratio'] / compression_comparison['total_comparisons']) if compression_comparison['total_comparisons'] > 0 else 0
+                "frackture_avg_ratio": compression_comparison.get('frackture_avg_ratio', 0),
+                "frackture_avg_throughput": compression_comparison.get('frackture_avg_speed', 0),
+                "gzip_by_level": compression_comparison.get('gzip_by_level', {}),
+                "brotli_by_quality": compression_comparison.get('brotli_by_quality', {}),
+                "total_comparisons": compression_comparison.get('total_comparisons', 0),
+                "frackture_wins_ratio": compression_comparison.get('frackture_wins_ratio', 0),
+                "frackture_wins_compression": compression_comparison.get('frackture_wins_ratio', 0),
+                "frackture_wins_speed": compression_comparison.get('frackture_wins_speed', 0),
+                "win_rate_ratio": compression_comparison.get('win_rate_ratio', 0),
+                "win_rate_speed": compression_comparison.get('win_rate_speed', 0),
+                "win_rate_percent": compression_comparison.get('win_rate_ratio', 0) * 100,
+                "win_rate_by_tier": compression_comparison.get('by_tier', {}),
+                "warnings": []
             },
             "q5_latency_hashing_encryption": {
                 "operations": latency_analysis,
@@ -783,7 +899,27 @@ def main():
             "has_critical_issues": len([w for w in weaknesses if w.get('type') in ['fault_injection_failures', 'high_reconstruction_error']]) > 0
         }
     }
-    
+
+    # Competition warnings for win-rate target (>60%) in optimal tiers
+    optimal_tiers = {'small', 'medium', 'large', 'xlarge', 'xxlarge', 'huge'}
+    tier_rates = insights['phase2_questions']['q4_vs_gzip_brotli'].get('win_rate_by_tier', {})
+    warnings = []
+    for tier_name, stats in tier_rates.items():
+        if tier_name not in optimal_tiers:
+            continue
+        total = stats.get('total_comparisons', 0)
+        if total <= 0:
+            continue
+        if stats.get('win_rate_ratio', 0.0) < 0.60:
+            warnings.append({
+                'tier': tier_name,
+                'win_rate_ratio': stats.get('win_rate_ratio', 0.0),
+                'total_comparisons': total,
+            })
+
+    insights['phase2_questions']['q4_vs_gzip_brotli']['warnings'] = warnings
+    insights['phase2_questions']['q4_vs_gzip_brotli']['meets_60_percent_target_in_optimal_tiers'] = len(warnings) == 0
+
     # Add latency comparisons
     if 'sha256' in latency_analysis and 'frackture_hash' in latency_analysis:
         sha_lat = latency_analysis['sha256']['avg_latency_ms']
