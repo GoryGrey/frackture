@@ -61,7 +61,7 @@ class TestCompactPayloadFormat:
         
         # Serialize to bytes
         serialized = original.to_bytes()
-        assert len(serialized) == 65  # 1 header + 32 symbolic + 32 entropy
+        assert len(serialized) == 69  # 1 header + 4 integrity + 32 symbolic + 32 entropy
         
         # Deserialize back
         deserialized = FrackturePayload.from_bytes(serialized)
@@ -118,6 +118,35 @@ class TestCompactPayloadFormat:
             error = abs(original_float - dequantized_float)
             assert error < 0.001, f"Quantization error at index {i}: {error}"
 
+    def test_integrity_token_generation(self):
+        """Test that integrity token is generated and persisted"""
+        payload = FrackturePayload(
+            symbolic=b'\x00' * 32,
+            entropy=[1000] * 16,
+            tier_name=CompressionTier.DEFAULT.value
+        )
+        
+        # Token should be None initially if not provided
+        assert payload.integrity_token is None
+        
+        # to_bytes() should generate it
+        compact = payload.to_bytes()
+        assert payload.integrity_token is not None
+        assert len(payload.integrity_token) == 8  # 8 hex chars (4 bytes)
+        
+        # from_bytes() should read it
+        deserialized = FrackturePayload.from_bytes(compact)
+        assert deserialized.integrity_token == payload.integrity_token
+        
+        # to_legacy_dict() should include it
+        legacy = payload.to_legacy_dict()
+        assert "integrity_token" in legacy
+        assert legacy["integrity_token"] == payload.integrity_token
+        
+        # from_legacy_dict() should read it
+        from_legacy = FrackturePayload.from_legacy_dict(legacy)
+        assert from_legacy.integrity_token == payload.integrity_token
+
     def test_legacy_dict_compatibility(self):
         """Test compatibility with legacy dict format"""
         # Create legacy dict with exactly 16 entropy values
@@ -155,7 +184,7 @@ class TestCompactPayloadFormat:
                 
                 # Serialize and check size
                 compact_bytes = payload.to_bytes()
-                assert 60 <= len(compact_bytes) <= 70, f"Unexpected size: {len(compact_bytes)}"
+                assert 60 <= len(compact_bytes) <= 75, f"Unexpected size: {len(compact_bytes)}"
                 
                 # Verify round-trip
                 deserialized = FrackturePayload.from_bytes(compact_bytes)
@@ -176,7 +205,7 @@ class TestSerializationHelpers:
         
         result = serialize_frackture_payload(legacy_dict)
         assert isinstance(result, bytes)
-        assert len(result) == 65
+        assert len(result) == 69
 
     def test_serialize_payload_input(self):
         """Test serializing FrackturePayload input"""
@@ -219,7 +248,7 @@ class TestSerializationHelpers:
         
         with pytest.raises(ValueError, match="Unsupported payload version"):
             # Create payload with wrong version (manually modify header)
-            data = b'\xFF' + b'\x00' * 64  # Header version = 31 (> 1)
+            data = b'\xFF' + b'\x00' * 68  # Header version = 31 (> 1), length 69
             deserialize_frackture_payload(data)
 
 
