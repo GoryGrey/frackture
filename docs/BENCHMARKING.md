@@ -270,15 +270,30 @@ python benchmark_frackture.py --verify-only
 python benchmark_frackture.py --detailed
 ```
 
-### Compression Settings
+### Competitor Coverage (gzip/brotli sweeps)
+
+The benchmark suite supports **single-config runs** and **multi-config sweeps** for fair competitor coverage.
+
+**Default sweep (when you do not pass `--gzip-levels` / `--brotli-qualities`):**
+- gzip levels: **1, 6, 9**
+- brotli qualities: **4, 6, 11** (if `brotli` is installed)
 
 ```bash
-# Adjust gzip compression level (1-9, default: 6)
+# Force a single gzip configuration
 python benchmark_frackture.py --gzip-level 9
 
-# Adjust brotli quality (0-11, default: 6)
+# Force a single brotli configuration
 python benchmark_frackture.py --brotli-quality 11
+
+# Explicit sweeps (override defaults)
+python benchmark_frackture.py --gzip-levels 1 6 9
+python benchmark_frackture.py --brotli-qualities 4 6 11
+
+# Full competition report: all tiers + comprehensive sweeps
+python benchmark_frackture.py --competition-report
 ```
+
+**Outputs:** the JSON and Markdown reports include `competition_summary` (overall + per tier win rates) and per-dataset comparison records.
 
 ### Custom Output
 

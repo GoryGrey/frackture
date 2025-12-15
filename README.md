@@ -33,8 +33,17 @@ Frackture is **not traditional compression**—it's a symbolic encoding system t
 | Compression Ratio (1MB) | ~10,000x | 2-10x |
 | Speed | 160+ MB/s encode, 4700+ MB/s decode | 25-90 MB/s encode, 300-700 MB/s decode |
 | Security | Built-in HMAC encryption | Requires separate encryption |
+| Benchmark Coverage | `--competition-report` runs all tiers + gzip/brotli sweeps with per-tier win rates | Typically tuned per level/quality |
 
 See [BENCHMARK_SUITE_SUMMARY.md](./BENCHMARK_SUITE_SUMMARY.md) for detailed performance comparisons.
+
+To run the full competitor coverage (all tiers + gzip/brotli sweeps + per-tier win rates):
+
+```bash
+cd benchmarks
+python benchmark_frackture.py --competition-report
+python analyze_results.py  # generates analysis/report.md + analysis/insights.json
+```
 
 ---
 

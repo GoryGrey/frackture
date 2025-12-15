@@ -131,7 +131,9 @@ python benchmark_frackture.py
 # This tests:
 # - All 15+ real datasets
 # - medium tier (100 KB) and large tier (1 MB)
-# - Frackture, gzip (level 6), and brotli (quality 6, if available)
+# - Frackture + gzip/brotli sweeps
+#   - gzip defaults: levels 1, 6, 9
+#   - brotli defaults: qualities 4, 6, 11 (if available)
 ```
 
 ### Size-Specific Benchmarks
@@ -182,10 +184,12 @@ python benchmark_frackture.py --gzip-level 9
 # Adjust brotli quality (0=fastest, 11=best compression)
 python benchmark_frackture.py --brotli-quality 11
 
-# Test multiple compression levels
-python benchmark_frackture.py --gzip-level 1  # Fast
-python benchmark_frackture.py --gzip-level 6  # Default
-python benchmark_frackture.py --gzip-level 9  # Maximum
+# Sweep multiple compression levels in a single run
+python benchmark_frackture.py --gzip-levels 1 6 9
+python benchmark_frackture.py --brotli-qualities 4 6 11
+
+# Full competition report (all tiers + comprehensive sweeps)
+python benchmark_frackture.py --competition-report
 ```
 
 ### Custom Output Directory
