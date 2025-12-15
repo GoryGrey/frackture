@@ -73,8 +73,8 @@ For each dataset and size tier:
 Each benchmark result includes:
 - **Correctness**: Lossless algorithms verified bit-for-bit, Frackture verified via MSE
 - **Determinism**: Same input produces same output across multiple runs
-- **Fault tolerance**: Corrupted payloads are detected and rejected
-- **Payload structure**: Frackture payloads verified to be ~96 bytes
+- **Fault tolerance**: Structural corruption and authenticated-envelope tampering are exercised (raw payloads do not include an internal checksum)
+- **Payload structure**: Frackture compact payloads are verified to be **65 bytes** (`FrackturePayload.to_bytes()`)
 
 ---
 
@@ -156,12 +156,12 @@ Predefined combinations for realistic workloads:
 
 Validates that Frackture produces consistent, fixed-size outputs:
 
-- **symbolic_bytes**: Size of symbolic fingerprint in bytes (32 bytes = 64 hex chars)
-- **entropy_bytes**: Size of entropy signature in bytes (16 floats × 8 = 128 bytes)
-- **serialized_total_bytes**: Total JSON serialized payload size (~96 bytes)
-- **payload_is_96b**: Boolean check that payload is within 90-102 bytes
+- **symbolic_bytes**: 32 bytes (raw)
+- **entropy_bytes**: 32 bytes (16 × uint16 quantized)
+- **serialized_total_bytes**: 65 bytes (`FrackturePayload.to_bytes()`)
+- **payload_is_96b**: Historical flag retained by the benchmark schema (compact payloads are 65B in current versions)
 
-**Why it matters**: Frackture's core value proposition is fixed-size output. This validates the claim.
+**Why it matters**: Frackture’s core value proposition is fixed-size output (as a sketch), not bitwise reconstruction.
 
 #### Reconstruction Quality (MSE)
 
@@ -350,19 +350,19 @@ Results are printed as formatted tables:
 ========================================================================================================
 Dataset: text_plain (medium - 100.00 KB)
 ========================================================================================================
-| Method               | Original     | Compressed   | Ratio    | Encode (ms)  | Decode (ms)  | ...
-|----------------------|--------------|--------------|----------|--------------|--------------|-----
-| Frackture            | 100.00 KB    | 96 B         | 1066.67x | 2.45         | 0.82         | ...
-| Gzip (level 6)       | 100.00 KB    | 35.21 KB     | 2.84x    | 1.23         | 0.56         | ...
-| Brotli (quality 6)   | 100.00 KB    | 28.44 KB     | 3.52x    | 15.67        | 0.45         | ...
+| Method               | Original     | Compressed   | Ratio     | Encode (ms)  | Decode (ms)  | ...
+|----------------------|--------------|--------------|-----------|--------------|--------------|-----
+| Frackture (compact)  | 100.00 KB    | 65 B         | 1575.38x  | 6.06         | 0.29         | ...
+| Gzip (L6)            | 100.00 KB    | ~0.8 KB      | ~146x     | ~0.47        | ~0.09        | ...
+| Brotli (Q6)          | 100.00 KB    | ~0.3 KB      | ~579x     | ~0.33        | ~0.11        | ...
 ========================================================================================================
 
 FRACKTURE VERIFICATION METRICS:
-  Payload Size: 96 bytes (symbolic: 32 B, entropy: 128 B serialized)
-  Baseline MSE: 0.000234
-  Optimized MSE: 0.000198 (improvement: 15.38%)
+  Payload Size: 65 bytes (symbolic: 32 B, entropy: 32 B quantized)
+  Baseline MSE: (data dependent)
+  Optimized MSE: (data dependent; typical 5–30% improvement)
   Deterministic: Yes (0 drifts in 3 runs)
-  Fault Injection: Passed (4/4 corruption tests detected)
+  Fault Injection: The raw payload has no checksum; authenticated envelopes detect tampering
 ```
 
 ### What to Look For
@@ -370,12 +370,12 @@ FRACKTURE VERIFICATION METRICS:
 #### 1. Compression Ratio
 
 **Frackture**:
-- Scales with input size (fixed ~96-byte output)
-- tiny (50 B): ~0.5x (expansion, smaller than input)
-- small (1 KB): ~10x
-- medium (100 KB): ~1000x
-- large (1 MB): ~10,000x
-- xlarge (10 MB): ~100,000x
+- Scales with input size because the compact payload is fixed at **65 bytes**
+- tiny (~50 B): <1× (expansion)
+- small (~1 KB): ~16×
+- medium (~100 KB): ~1575×
+- large (~1 MB): ~16132×
+- xlarge (~10 MB): ~161k×
 
 **gzip/brotli**:
 - Depends on compressibility
@@ -387,23 +387,21 @@ FRACKTURE VERIFICATION METRICS:
 
 #### 2. Throughput
 
-**Frackture Encode**:
-- tiny/small: 10-50 MB/s
-- medium: 100-200 MB/s
-- large: 150-250 MB/s
-- xlarge+: ~200 MB/s (bottlenecked by FFT)
+**Frackture Encode** (real datasets, averages):
+- 100 KB tier: ~15 MB/s
+- 1 MB tier: ~154 MB/s
 
-**Frackture Decode**:
-- tiny/small: 100-500 MB/s
-- medium: 1000-3000 MB/s
-- large: 3000-5000 MB/s
-- xlarge+: ~5000 MB/s
+**Frackture Decode** (real datasets, averages):
+- 100 KB tier: ~377 MB/s
+- 1 MB tier: ~3944 MB/s
 
-**gzip/brotli**:
-- Encode: 20-90 MB/s (gzip), 5-30 MB/s (brotli)
-- Decode: 200-700 MB/s
+**gzip/brotli** (real datasets, averages; representative configs):
+- gzip L6 encode: ~235 MB/s (100 KB), ~263 MB/s (1 MB)
+- brotli Q6 encode: ~447 MB/s (100 KB), ~785 MB/s (1 MB)
 
-**Interpretation**: Frackture decode is 3-10× faster than traditional compression, making it ideal for read-heavy workloads.
+**Interpretation**:
+- Frackture is often **slower to encode** than gzip/brotli.
+- Frackture can be **very fast to decode** for larger payloads.
 
 #### 3. MSE (Frackture Only)
 
@@ -435,75 +433,41 @@ Should always be **Yes** for Frackture. If you see drifts:
 
 ## What Frackture Optimizes For
 
-Based on empirical benchmark data, Frackture excels at:
+Frackture optimizes for **deterministic, fixed-size sketching** that can be reconstructed into a stable vector space.
 
-### ✅ Identity-Preserving Fingerprinting
+### Deterministic fixed-size sketching (indexable “content ID”, not cryptographic)
 
-**Use case**: Generate unique signatures for data deduplication, caching, or indexing.
+**Use case**: Stable keys for indexing, bucketing, caching, and dedup candidate generation.
 
-**Why Frackture wins**:
-- Fixed 96-byte output regardless of input size
-- Deterministic (same input = same fingerprint)
-- Fast encode/decode (especially decode)
-- Built-in entropy awareness (detects similar patterns)
+**Why it can be useful**:
+- **Fixed 65-byte compact payload** (constant index width)
+- Deterministic (same input → same payload)
 
-**Evidence**:
-- Compression ratio scales linearly with input size
-- 100% determinism across all tests
-- 3-10× faster decode than traditional compression
+**Evidence** (real datasets):
+- 100 KB tier: 65 B output ⇒ ~1575× “ratio” by definition
+- 1 MB tier: 65 B output ⇒ ~16132× “ratio” by definition
 
-**Example**: Content-addressable storage where you need consistent, compact fingerprints.
+### Similarity / near-duplicate workflows (non-semantic)
 
-### ✅ High-Speed Similarity Detection
-
-**Use case**: Compare documents/images/data for similarity without storing full content.
-
-**Why Frackture wins**:
-- Entropy channel captures frequency patterns
-- Symbolic channel captures identity
-- Fast to generate and compare
-- MSE metric quantifies similarity
+**Use case**: Near-duplicate clustering where “shape of bytes” matters (format similarity, repeated structures, partially edited content).
 
 **Evidence**:
-- Optimization reduces MSE by 5-30%
-- Entropy signature preserves frequency domain information
-- Reconstruction quality improves with optimization
+- Optimization typically improves MSE by ~5–30% (dataset dependent)
+- Reconstructed vectors support cosine/L2 similarity comparisons
 
-**Example**: Finding near-duplicate documents in a large corpus.
+### Deterministic vector sketches as an alternative to storing float embeddings
 
-### ✅ Embedding Compression for ML/AI
+**Use case**: You already have 768-D vectors (or can accept a byte-derived 768-D representation) and want a tiny representation.
 
-**Use case**: Compress high-dimensional vectors (768-d BERT embeddings) to fixed-size representations.
+**Size math**:
+- 768 × float32 = 3072 bytes
+- Frackture compact payload = 65 bytes
+- Reduction = ~47× (lossy)
 
-**Why Frackture wins**:
-- Designed for 768-element vectors (perfect for BERT)
-- Dual-channel preserves both identity and frequency
-- Lossy compression acceptable for embeddings
-- 8-10× size reduction (768 floats → 96 bytes)
+### Integrity and authentication
 
-**Evidence**:
-- Processes 768-element vectors natively
-- Low MSE reconstruction (< 0.01 typical)
-- Self-optimization tunes for specific data distributions
-
-**Example**: Storing millions of BERT embeddings with minimal space overhead.
-
-### ✅ Fast Integrity Checking
-
-**Use case**: Verify data hasn't changed without storing/comparing full payload.
-
-**Why Frackture wins**:
-- Faster hash generation than SHA256
-- Includes entropy signature (detects subtle corruption)
-- Built-in HMAC encryption for authentication
-- Fault injection tests validate corruption detection
-
-**Evidence**:
-- Hash time < 1 ms for 100 KB inputs
-- 100% corruption detection in fault injection tests
-- Constant-time signature comparison (timing-attack resistant)
-
-**Example**: Verifying file integrity in a distributed system.
+- For **cryptographic content addressing**, use **SHA-256** (or BLAKE3). Frackture’s symbolic component is not a cryptographic hash.
+- For **tamper detection of stored payloads**, use the authenticated envelope (`frackture_encrypt_payload` / `frackture_decrypt_payload`).
 
 ---
 
@@ -526,15 +490,17 @@ Based on empirical benchmark data, Frackture excels at:
 
 ### Compression Ratio Comparison
 
-| Input Size | Frackture | gzip (text) | brotli (text) | gzip (random) | Winner |
-|------------|-----------|-------------|---------------|---------------|--------|
-| 50 B | ~0.5× (expansion) | ~1.5× | ~1.8× | ~1.0× | **gzip/brotli** |
-| 1 KB | ~10× | 3-5× | 4-6× | ~1.0× | **Frackture** (if lossy OK) |
-| 100 KB | ~1000× | 3-5× | 4-7× | ~1.0× | **Frackture** |
-| 1 MB | ~10,000× | 3-6× | 4-8× | ~1.0× | **Frackture** |
-| 100 MB | ~1,000,000× | 3-6× | 4-8× | ~1.0× | **Frackture** |
+Frackture’s compact payload is fixed at **65 bytes**, so its “compression ratio” is approximately `input_size / 65` (linear in input size).
 
-**Key insight**: Frackture's advantage grows exponentially with input size because it always produces ~96 bytes.
+| Input Size | Frackture (compact) | gzip (text) | brotli (text) | gzip (random) | Winner |
+|------------|---------------------|-------------|---------------|---------------|--------|
+| 50 B | ~0.77× (expansion) | ~1.5× | ~1.8× | ~1.0× | gzip/brotli |
+| 1 KB | ~16× | 3-5× | 4-6× | ~1.0× | Frackture (if lossy OK) |
+| 100 KB | ~1575× | 3-5× | 4-7× | ~1.0× | Frackture |
+| 1 MB | ~16132× | 3-6× | 4-8× | ~1.0× | Frackture |
+| 100 MB | ~1,610,615× | 3-6× | 4-8× | ~1.0× | Frackture |
+
+**Key insight**: Frackture’s ratio advantage grows linearly with input size because the output size is fixed.
 
 ---
 
@@ -588,39 +554,33 @@ Based on benchmark results:
 
 #### Tiny (<100 B)
 
-- **Frackture**: Expands to 96 bytes (not recommended)
-- **gzip**: ~1.5× compression (modest gain)
-- **brotli**: ~2× compression (better)
-- **Recommendation**: Skip compression or use brotli
+- **Frackture**: Expands to **65 bytes** (often not appropriate for tiny inputs)
+- **gzip/brotli**: Typically small gains; sometimes expansion depending on headers
+- **Recommendation**: Skip Frackture for tiny payloads unless you explicitly want a fixed-size sketch
 
 #### Small (1 KB)
 
-- **Frackture**: ~10× (starts being useful)
-- **gzip**: 2-4× (good for highly compressible)
-- **brotli**: 3-5× (better ratio)
-- **Recommendation**: Use Frackture for fingerprinting, gzip/brotli for lossless
+- **Frackture (compact)**: ~16× (1024 / 65)
+- **gzip**: 2-4× (data-dependent)
+- **brotli**: 3-5× (data-dependent)
+- **Recommendation**: Use Frackture when fixed-size sketches are useful; use gzip/brotli when you need lossless output
 
-#### Medium (100 KB) - **Most Common**
+#### Medium (100 KB)
 
-- **Frackture**: ~1000× (excellent)
-- **gzip**: 2-6× (depends on data)
-- **brotli**: 3-8× (better ratio)
-- **Recommendation**: Frackture excels here if lossy OK
+- **Frackture (compact)**: ~1575×
+- **Encode speed (avg)**: ~15 MB/s (real datasets)
+- **Decode speed (avg)**: ~377 MB/s (real datasets)
 
 #### Large (1 MB)
 
-- **Frackture**: ~10,000× (outstanding)
-- **Encode speed**: 150-200 MB/s (fast)
-- **Decode speed**: 4000-5000 MB/s (very fast)
-- **Recommendation**: Frackture ideal for fingerprinting large files
+- **Frackture (compact)**: ~16132×
+- **Encode speed (avg)**: ~154 MB/s (real datasets)
+- **Decode speed (avg)**: ~3944 MB/s (real datasets)
 
-#### XLarge+ (10 MB - 1 GB)
+#### XLarge+ (10 MB+)
 
-- **Frackture**: 100,000×+ (extreme ratios)
-- **Encode speed**: Stable ~200 MB/s
-- **Decode speed**: Stable ~5000 MB/s
-- **Memory**: Consistent ~10 MB (doesn't scale)
-- **Recommendation**: Use Frackture for fixed-size signatures of huge files
+- **Frackture (compact)**: ~161k× at 10 MB, ~1.6M× at 100 MB
+- **Recommendation**: Frackture is most compelling here for fixed-size signatures of very large payloads
 
 ---
 
@@ -641,20 +601,19 @@ python benchmark_frackture.py --large-only --real
 - Encode speed: Should be 100+ MB/s (for fast indexing)
 - Memory: Should be < 20 MB (for scalability)
 
-**Why Frackture wins**:
-- Fixed 96-byte fingerprints (constant index size)
-- Deterministic (reliable deduplication)
-- Fast encoding (can process large volumes)
-- Low memory (can run on limited resources)
+**Why Frackture can work here**:
+- Fixed **65-byte** compact payloads (constant index size)
+- Deterministic (reliable candidate generation)
+- Decode is very fast for larger payloads (reconstruction is cheap)
 
 ### Scenario 2: ML Embedding Storage
 
 **Goal**: Store 1 billion BERT embeddings (768-dim each).
 
 **Math**:
-- Raw: 1B × 768 floats × 4 bytes = 2.8 TB
-- Frackture: 1B × 96 bytes = 90 GB
-- **Savings: 97% reduction**
+- Raw: 1B × 768 float32 = 1B × 3072 bytes ≈ 2.8 TB
+- Frackture: 1B × 65 bytes ≈ 65 GB
+- **Savings**: ~97.7% reduction (lossy)
 
 **Setup**:
 ```bash
@@ -765,25 +724,28 @@ Required for dataset repository. Core dependency as of v2.0.
 
 ## Summary
 
-**Frackture is optimized for**:
-1. Fixed-size fingerprinting (deduplication, caching)
-2. High-speed similarity detection (near-duplicate search)
-3. ML embedding compression (BERT, GPT vectors)
-4. Fast integrity checking (corruption detection)
+Frackture is optimized for:
 
-**Use traditional compression for**:
-1. Lossless requirements (exact reconstruction)
-2. Small file compression (<1 KB)
-3. Network transmission (lossless protocols)
-4. Long-term archival (legal/compliance)
+1. **Deterministic fixed-size sketching** (65-byte compact payloads)
+2. **Near-duplicate / similarity workflows** where “shape of bytes” is relevant (non-semantic)
+3. **Replacing stored float vectors** when you can tolerate a lossy sketch (e.g., you need a deterministic 768-D proxy but can’t afford 3–6 KB per item)
 
-**The benchmark suite helps you**:
-1. Understand Frackture's performance characteristics
-2. Compare against standard compression algorithms
-3. Validate correctness and determinism
-4. Answer positioning questions empirically
+Use other tools when:
 
-For more details, see:
-- [benchmarks/README.md](../benchmarks/README.md) - Running benchmarks
-- [benchmarks/datasets/README.md](../benchmarks/datasets/README.md) - Dataset details
-- [BENCHMARK_SUITE_SUMMARY.md](../BENCHMARK_SUITE_SUMMARY.md) - Implementation summary
+- You need **lossless** reconstruction → gzip/brotli/zstd
+- You need **cryptographic content addressing** → SHA-256 / BLAKE3
+- You need **semantic similarity** → learned embeddings
+
+### Quick comparative tables (real datasets)
+
+These are averages across 14 real datasets:
+
+| Tier | Source results | Frackture output | Frackture encode MB/s | Frackture decode MB/s |
+|---|---|---:|---:|---:|
+| 100 KB | `benchmark_results_20251215_102813.json` | 65 B | ~15 | ~377 |
+| 1 MB | `benchmark_results_20251215_103006.json` | 65 B | ~154 | ~3944 |
+
+For full details and gzip/brotli sweeps, see:
+- [BENCHMARK_SUITE_SUMMARY.md](../BENCHMARK_SUITE_SUMMARY.md)
+- [docs/USE_CASES.md](./USE_CASES.md)
+- [benchmarks/README.md](../benchmarks/README.md)

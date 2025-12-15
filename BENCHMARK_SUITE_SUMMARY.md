@@ -42,11 +42,11 @@ Replaced synthetic Lorem Ipsum generators with **15+ curated, redistribution-saf
 - Peak memory usage (RSS with psutil, or tracemalloc fallback)
 
 **Frackture-Specific Verification:**
-- **Payload Sizing**: Validates fixed ~96-byte output
-  - `symbolic_bytes`: 32 bytes (64 hex chars)
-  - `entropy_bytes`: 128 bytes (16 floats × 8)
-  - `serialized_total_bytes`: ~96 bytes (JSON serialized)
-  - `payload_is_96b`: Boolean check (90-102 byte range)
+- **Payload Sizing**: Validates the compact fixed-size payload
+  - `symbolic_bytes`: 32 bytes
+  - `entropy_bytes`: 32 bytes (16 × uint16, quantized)
+  - `serialized_total_bytes`: **65 bytes** in compact form (`FrackturePayload.to_bytes()`)
+  - Note: the metric field is still named `payload_is_96b` for historical reasons; current compact payloads are 65B.
 
 - **Reconstruction Quality (MSE)**:
   - `baseline_mse`: Original vs reconstructed error
@@ -123,83 +123,69 @@ All results timestamped and saved to `benchmarks/results/`.
 
 ---
 
-## 📊 Sample Results
+## Sample Results (Real Datasets)
 
-### Medium Files (100 KB)
+All numbers in this section come from **real dataset runs** committed under `benchmarks/results/`.
 
-**Text Dataset:**
+### Medium tier (100 KB, 14 datasets)
 
-| Method | Compressed Size | Ratio | Encode | Decode | Memory |
-|--------|----------------|-------|--------|--------|--------|
-| Frackture | 96 B | 1,066× | 40.82 MB/s | 122 MB/s | 2.5 MB |
-| Gzip (6) | 35 KB | 2.84× | 81.30 MB/s | 178 MB/s | 1.9 MB |
-| Brotli (6) | 28 KB | 3.52× | 6.38 MB/s | 222 MB/s | 3.1 MB |
+From `benchmarks/results/benchmark_results_20251215_102813.json` (averages):
 
-**Binary Dataset (PNG):**
+| Method | Output (avg) | Ratio (avg) | Encode (avg MB/s) | Decode (avg MB/s) |
+|---|---:|---:|---:|---:|
+| **Frackture (compact)** | **65 B** | **1575×** | 14.9 | 377.0 |
+| gzip (L6) | 818 B | 146× | 234.9 | 1125.5 |
+| brotli (Q6) | 292 B | 579× | 446.9 | 876.3 |
+| SHA-256 (hex) | 64 B | 1600× | 1243.3 | — |
 
-| Method | Compressed Size | Ratio | Encode | Decode |
-|--------|----------------|-------|--------|--------|
-| Frackture | 96 B | 1,066× | 42 MB/s | 125 MB/s |
-| Gzip (6) | 102 KB | 0.98× | 45 MB/s | 1,258 MB/s |
-| Brotli (6) | 101 KB | 1.01× | 7 MB/s | 1,100 MB/s |
+### Large tier (1 MB, 14 datasets)
 
-**Key Observation**: Frackture maintains consistent performance regardless of compressibility, while gzip/brotli struggle with pre-compressed binary data.
+From `benchmarks/results/benchmark_results_20251215_103006.json` (averages):
 
-### Large Files (1 MB)
+| Method | Output (avg) | Ratio (avg) | Encode (avg MB/s) | Decode (avg MB/s) |
+|---|---:|---:|---:|---:|
+| **Frackture (compact)** | **65 B** | **16132×** | 153.7 | **3944.4** |
+| gzip (L6) | 4991 B | 231× | 263.4 | 1760.1 |
+| brotli (Q6) | 344 B | 4349× | 785.1 | 914.0 |
+| SHA-256 (hex) | 64 B | 16384× | 1287.6 | — |
 
-**Text Dataset:**
+### gzip/brotli sweeps: win rates by tier
 
-| Method | Compressed Size | Ratio | Encode | Decode | Memory |
-|--------|----------------|-------|--------|--------|--------|
-| Frackture | 96 B | 10,923× | 163 MB/s | 4,771 MB/s | 2.5 MB |
-| Gzip (6) | 151 KB | 6.9× | 24 MB/s | 326 MB/s | 3.2 MB |
-| Brotli (6) | 125 KB | 8.4× | 8 MB/s | 312 MB/s | 4.1 MB |
+From `benchmarks/results/benchmark_results_20251215_102604.json` (gzip levels 1–9, brotli qualities 0–11):
 
-**Key Observation**: Frackture's compression ratio scales dramatically with input size (fixed 96-byte output).
-
-### Verification Metrics (Frackture Only)
-
-**All Datasets (1 MB):**
-
-- **Payload Size**: 96 bytes ✓ (100% within 90-102 byte range)
-- **Determinism**: 100% ✓ (0 drifts across all tests)
-- **Fault Injection**: 100% pass rate ✓ (all corruption tests detected)
-- **MSE**: 0.0001-0.01 (excellent to good reconstruction)
-- **Optimization Impact**: 5-30% MSE reduction typical
+| Tier | Frackture win-rate (compression ratio) | Frackture win-rate (encode throughput) |
+|---|---:|---:|
+| tiny | 25.0% | 0.0% |
+| small | 93.5% | 0.0% |
+| medium | 96.9% | 1.0% |
+| large | 98.6% | 10.5% |
+| xlarge | 100.0% | 100.0% |
 
 ---
 
-## 🎯 Key Insights
+## Key Insights (Benchmark-Backed)
 
-### Frackture's Unique Advantages
+1. **Fixed-size compact payload (65 bytes)**
+   - The canonical storage format is `FrackturePayload.to_bytes()` (1 header + 32B symbolic + 32B quantized entropy).
+   - This is the size used in the benchmark suite’s Frackture measurements.
 
-1. **Fixed-Size Output** (~96 bytes always)
-   - Ideal for fingerprinting, deduplication, caching
-   - Compression ratio scales with input size (1 MB → 10,000×, 1 GB → 10,000,000×)
-   - Predictable storage requirements
+2. **Ratio wins are common beyond tiny inputs**
+   - In the full sweep, Frackture wins on compression ratio in ~94–100% of comparisons for small→xlarge tiers.
+   - In the tiny tier, fixed output dominates and Frackture often loses.
 
-2. **Consistent Performance**
-   - Works equally well on compressible and incompressible data
-   - Doesn't degrade for random noise (unlike gzip/brotli)
-   - Memory usage doesn't scale with input size (~10 MB constant)
+3. **Encode is typically slower than gzip/brotli; decode can be very fast**
+   - At 100 KB, Frackture encode is much slower than gzip/brotli.
+   - At 1 MB, Frackture decode is ~2.2× faster than gzip L6 on average.
 
-3. **Fast Decoding**
-   - 3-10× faster than gzip/brotli for large files
-   - Ideal for read-heavy workloads (CDNs, databases)
-   - Throughput: 3,000-5,000 MB/s for 1+ MB files
+4. **Determinism is strong; tamper detection requires authentication**
+   - The raw compact payload is deterministic.
+   - If you need mutation detection, use the authenticated envelope (`frackture_encrypt_payload` / `frackture_decrypt_payload`).
 
-4. **Built-in Verification**
-   - Deterministic encoding (same input → same fingerprint)
-   - Entropy awareness (frequency pattern detection)
-   - Fault injection tests validate robustness
-   - Self-optimization tunes for specific data distributions
+### When to use gzip/brotli instead
 
-### When to Use Traditional Compression
-
-- **Small files (<1 KB)**: Frackture may expand to 96 bytes
-- **Lossless requirements**: Frackture is lossy by design (MSE 0.0001-0.01)
-- **Network transmission**: Protocols expect lossless compression
-- **Archival storage**: Legal/compliance may require exact reconstruction
+- You need **lossless** recovery of the original bytes.
+- You are compressing **tiny** payloads where a fixed 65B sketch is not appropriate.
+- You need maximum encode throughput on CPU for compressible text.
 
 ---
 
