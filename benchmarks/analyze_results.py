@@ -390,10 +390,15 @@ def analyze_latency(results_data):
         'aes_gcm': []
     }
     
+    hash_ratios = []
+
     for dataset, methods in results_data.items():
         for m in methods:
             if m['name'] == 'Frackture':
                 latency_data['frackture_hash'].append(m.get('hash_time', 0))
+                # Compute ratio if sha256_time is present
+                if m.get('sha256_time') and m['sha256_time'] > 0:
+                    hash_ratios.append(m['hash_time'] / m['sha256_time'])
             elif m['name'] == 'Frackture Encrypted':
                 latency_data['frackture_encrypt'].append(m.get('hash_time', 0))
             elif m['name'] == 'SHA256':
@@ -410,6 +415,11 @@ def analyze_latency(results_data):
                 'max_latency_ms': max(values),
                 'count': len(values)
             }
+            
+    if hash_ratios:
+        summary['hash_ratio_avg'] = statistics.mean(hash_ratios)
+        summary['hash_ratio_min'] = min(hash_ratios)
+        summary['hash_ratio_max'] = max(hash_ratios)
     
     return summary
 
@@ -484,19 +494,22 @@ def detect_weaknesses(results_data, method_comparison, tier_stats, latency_analy
         })
 
     # Check hash latency ratio vs SHA256 baseline
-    if latency_analysis and 'sha256' in latency_analysis and 'frackture_hash' in latency_analysis:
-        sha_lat = latency_analysis['sha256'].get('avg_latency_ms', 0)
-        frac_lat = latency_analysis['frackture_hash'].get('avg_latency_ms', 0)
-        if sha_lat > 0:
-            ratio = frac_lat / sha_lat
-            if ratio > 2.0:
-                weaknesses.append({
-                    'type': 'hash_latency_regression',
-                    'hash_latency_ratio': ratio,
-                    'frackture_hash_ms': frac_lat,
-                    'sha256_hash_ms': sha_lat,
-                    'description': f"Frackture hashing is {ratio:.2f}x slower than SHA256 ({frac_lat:.4f}ms vs {sha_lat:.4f}ms)"
-                })
+    if latency_analysis:
+        ratio = None
+        if 'hash_ratio_avg' in latency_analysis:
+            ratio = latency_analysis['hash_ratio_avg']
+        elif 'sha256' in latency_analysis and 'frackture_hash' in latency_analysis:
+            sha_lat = latency_analysis['sha256'].get('avg_latency_ms', 0)
+            frac_lat = latency_analysis['frackture_hash'].get('avg_latency_ms', 0)
+            if sha_lat > 0:
+                ratio = frac_lat / sha_lat
+                
+        if ratio and ratio > 2.0:
+            weaknesses.append({
+                'type': 'hash_latency_regression',
+                'hash_latency_ratio': ratio,
+                'description': f"Frackture hashing is {ratio:.2f}x slower than SHA256"
+            })
     
     return weaknesses
 
@@ -717,7 +730,11 @@ def main():
             if 'sha256' in latency_analysis and 'frackture_hash' in latency_analysis:
                 sha_lat = latency_analysis['sha256']['avg_latency_ms']
                 frac_lat = latency_analysis['frackture_hash']['avg_latency_ms']
-                if sha_lat > 0:
+                
+                if 'hash_ratio_avg' in latency_analysis:
+                    ratio = latency_analysis['hash_ratio_avg']
+                    f.write(f"**Frackture vs SHA256:** Ratio {ratio:.2f}x (Avg Frackture: {frac_lat:.4f}ms, Avg SHA256: {sha_lat:.4f}ms)\n\n")
+                elif sha_lat > 0:
                     speedup = sha_lat / frac_lat if frac_lat > 0 else 0
                     f.write(f"**Frackture vs SHA256:** Frackture is {speedup:.1f}x faster ({frac_lat:.4f}ms vs {sha_lat:.4f}ms)\n\n")
             
@@ -952,11 +969,17 @@ def main():
     if 'sha256' in latency_analysis and 'frackture_hash' in latency_analysis:
         sha_lat = latency_analysis['sha256']['avg_latency_ms']
         frac_lat = latency_analysis['frackture_hash']['avg_latency_ms']
+        
+        # Prefer paired ratio if available
+        hash_ratio = latency_analysis.get('hash_ratio_avg')
+        if hash_ratio is None and sha_lat > 0:
+            hash_ratio = frac_lat / sha_lat
+            
         if frac_lat > 0:
             insights['phase2_questions']['q5_latency_hashing_encryption']['comparisons']['frackture_vs_sha256'] = {
                 'frackture_ms': frac_lat,
                 'sha256_ms': sha_lat,
-                'hash_latency_ratio': (frac_lat / sha_lat) if sha_lat > 0 else None,
+                'hash_latency_ratio': hash_ratio,
                 'speedup_factor': sha_lat / frac_lat if frac_lat > 0 else 0,
                 'winner': 'Frackture' if frac_lat < sha_lat else 'SHA256'
             }

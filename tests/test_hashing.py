@@ -101,6 +101,13 @@ class TestHashing:
                 return f"Custom({self.value})"
 
         arr = np.array([1, 2, 3], dtype=np.int32)
+        FrackturePayload = frackture_module.FrackturePayload
+        
+        fp = FrackturePayload(
+            symbolic=b"x" * 32,
+            entropy=[0] * 16,
+            tier_name="default"
+        )
 
         cases = [
             (b"abc", b"abc"),
@@ -110,15 +117,19 @@ class TestHashing:
             ([1, "a"], json.dumps([1, "a"], sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")),
             (arr, arr.tobytes()),
             (_Custom(123), str(_Custom(123)).encode("utf-8")),
+            (fp, fp.to_bytes()),  # New fast path for FrackturePayload
         ]
 
         salt = "test_salt"
         salt_bytes = salt.encode("utf-8")
 
         for data, expected in cases:
-            normalized = normalize_to_bytes(data)
-            assert isinstance(normalized, (bytes, memoryview))
-            assert bytes(normalized) == expected
+            # normalize_to_bytes returns iterator of bytes/memoryview
+            normalized_iter = normalize_to_bytes(data)
+            normalized_parts = [bytes(chunk) for chunk in normalized_iter]
+            normalized_bytes = b"".join(normalized_parts)
+            
+            assert normalized_bytes == expected, f"Normalization mismatch for {type(data)}"
 
             digest = frackture_deterministic_hash(data, salt)
             assert isinstance(digest, str)
