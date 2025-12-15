@@ -393,13 +393,13 @@ def analyze_latency(results_data):
     for dataset, methods in results_data.items():
         for m in methods:
             if m['name'] == 'Frackture':
-                latency_data['frackture_hash'].append(m.get('hash_time', 0) * 1000)  # Convert to ms
+                latency_data['frackture_hash'].append(m.get('hash_time', 0))
             elif m['name'] == 'Frackture Encrypted':
-                latency_data['frackture_encrypt'].append(m.get('hash_time', 0) * 1000)
+                latency_data['frackture_encrypt'].append(m.get('hash_time', 0))
             elif m['name'] == 'SHA256':
-                latency_data['sha256'].append(m.get('hash_time', 0) * 1000)
+                latency_data['sha256'].append(m.get('hash_time', 0))
             elif m['name'] == 'AES-GCM':
-                latency_data['aes_gcm'].append(m.get('hash_time', 0) * 1000)
+                latency_data['aes_gcm'].append(m.get('hash_time', 0))
     
     summary = {}
     for key, values in latency_data.items():
@@ -413,7 +413,7 @@ def analyze_latency(results_data):
     
     return summary
 
-def detect_weaknesses(results_data, method_comparison, tier_stats):
+def detect_weaknesses(results_data, method_comparison, tier_stats, latency_analysis=None):
     """Auto-detect competitive weaknesses where Frackture underperforms."""
     weaknesses = []
     
@@ -482,6 +482,21 @@ def detect_weaknesses(results_data, method_comparison, tier_stats):
             'count': len(fault_issues),
             'description': f"Fault injection detection failed in {len(fault_issues)} cases - mutations not properly detected"
         })
+
+    # Check hash latency ratio vs SHA256 baseline
+    if latency_analysis and 'sha256' in latency_analysis and 'frackture_hash' in latency_analysis:
+        sha_lat = latency_analysis['sha256'].get('avg_latency_ms', 0)
+        frac_lat = latency_analysis['frackture_hash'].get('avg_latency_ms', 0)
+        if sha_lat > 0:
+            ratio = frac_lat / sha_lat
+            if ratio > 2.0:
+                weaknesses.append({
+                    'type': 'hash_latency_regression',
+                    'hash_latency_ratio': ratio,
+                    'frackture_hash_ms': frac_lat,
+                    'sha256_hash_ms': sha_lat,
+                    'description': f"Frackture hashing is {ratio:.2f}x slower than SHA256 ({frac_lat:.4f}ms vs {sha_lat:.4f}ms)"
+                })
     
     return weaknesses
 
@@ -539,9 +554,16 @@ def main():
     
     # 9. Latency Analysis (NEW Phase 2)
     latency_analysis = analyze_latency(results)
-    
+
+    hash_latency_ratio = None
+    if 'sha256' in latency_analysis and 'frackture_hash' in latency_analysis:
+        sha_lat = latency_analysis['sha256'].get('avg_latency_ms', 0)
+        frac_lat = latency_analysis['frackture_hash'].get('avg_latency_ms', 0)
+        if sha_lat > 0:
+            hash_latency_ratio = frac_lat / sha_lat
+
     # 10. Weakness Detection (NEW Phase 2)
-    weaknesses = detect_weaknesses(results, method_comparison, tier_stats)
+    weaknesses = detect_weaknesses(results, method_comparison, tier_stats, latency_analysis=latency_analysis)
 
     # Ensure output directory exists
     os.makedirs(args.output_dir, exist_ok=True)
@@ -787,6 +809,11 @@ def main():
                         f.write(f"- {case['dataset']} ({case['size']} bytes): MSE = {case['mse']:.4f}\n")
                     f.write("\n")
                 
+                elif wtype == 'hash_latency_regression':
+                    f.write(f"### ⚠️ Weakness #{i}: Hash Latency Regression\n")
+                    f.write(f"**Issue:** {weakness['description']}\n")
+                    f.write(f"**Hash Latency Ratio:** {weakness.get('hash_latency_ratio', 0):.2f}x\n\n")
+
                 elif wtype == 'fault_injection_failures':
                     f.write(f"### ⚠️ Weakness #{i}: Fault Injection Detection Gaps\n")
                     f.write(f"**Issue:** {weakness['description']}\n")
@@ -824,7 +851,8 @@ def main():
                 "max_bytes": payload_stats['max'],
                 "avg_bytes": payload_stats['avg'],
                 "samples": payload_stats['samples']
-            }
+            },
+            "hash_latency_ratio": hash_latency_ratio
         },
         "phase2_questions": {
             "q1_payload_size_fixed": {
@@ -928,6 +956,7 @@ def main():
             insights['phase2_questions']['q5_latency_hashing_encryption']['comparisons']['frackture_vs_sha256'] = {
                 'frackture_ms': frac_lat,
                 'sha256_ms': sha_lat,
+                'hash_latency_ratio': (frac_lat / sha_lat) if sha_lat > 0 else None,
                 'speedup_factor': sha_lat / frac_lat if frac_lat > 0 else 0,
                 'winner': 'Frackture' if frac_lat < sha_lat else 'SHA256'
             }

@@ -417,11 +417,61 @@ def optimize_frackture(input_vector, num_trials=5, tier: Optional[CompressionTie
 
 
 ### === Hashing Functions === ###
-def frackture_deterministic_hash(data, salt=""):
-    """Generate deterministic hash for collision testing"""
 
-    data_str = str(data) + salt
-    return hashlib.sha256(data_str.encode()).hexdigest()
+_HASH_CHUNK_SIZE = 1024 * 1024  # 1MiB
+
+
+def normalize_to_bytes(data: Any) -> Union[bytes, memoryview]:
+    """Normalize arbitrary data into bytes for hashing.
+
+    Fast-paths bytes-like objects and uses deterministic JSON for dict/list.
+    """
+
+    if isinstance(data, memoryview):
+        return data
+
+    if isinstance(data, (bytes, bytearray)):
+        return memoryview(data)
+
+    if isinstance(data, str):
+        return data.encode("utf-8")
+
+    if isinstance(data, np.ndarray):
+        return data.tobytes()
+
+    if isinstance(data, (dict, list, tuple)):
+        try:
+            return json.dumps(
+                data,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                default=str,
+            ).encode("utf-8")
+        except (TypeError, ValueError):
+            return str(data).encode("utf-8")
+
+    return str(data).encode("utf-8")
+
+
+def frackture_deterministic_hash(data, salt=""):
+    """Generate deterministic hash for collision testing."""
+
+    normalized = normalize_to_bytes(data)
+    mv = normalized if isinstance(normalized, memoryview) else memoryview(normalized)
+
+    hasher = hashlib.sha256()
+
+    if len(mv) <= _HASH_CHUNK_SIZE:
+        hasher.update(mv)
+    else:
+        for offset in range(0, len(mv), _HASH_CHUNK_SIZE):
+            hasher.update(mv[offset : offset + _HASH_CHUNK_SIZE])
+
+    if salt:
+        hasher.update(str(salt).encode("utf-8"))
+
+    return hasher.hexdigest()
 
 
 ### === Encryption/Decryption Functions === ###

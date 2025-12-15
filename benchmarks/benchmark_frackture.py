@@ -272,7 +272,28 @@ class MemoryTracker:
 
 class BenchmarkRunner:
     """Run benchmarks for different compression methods"""
-    
+
+    _HASH_TARGET_TOTAL_BYTES = 2 * 1024 * 1024
+    _HASH_MIN_RUNS = 5
+    _HASH_MAX_RUNS = 200
+
+    @staticmethod
+    def _hash_runs_for_size(size_bytes: int) -> int:
+        if size_bytes <= 0:
+            return BenchmarkRunner._HASH_MIN_RUNS
+
+        est = BenchmarkRunner._HASH_TARGET_TOTAL_BYTES // max(1, int(size_bytes))
+        return int(max(BenchmarkRunner._HASH_MIN_RUNS, min(BenchmarkRunner._HASH_MAX_RUNS, est)))
+
+    @staticmethod
+    def _avg_latency_ms(fn: Callable[[], Any], *, runs: int) -> float:
+        fn()  # warm-up
+        start_ns = time.perf_counter_ns()
+        for _ in range(runs):
+            fn()
+        elapsed_ns = time.perf_counter_ns() - start_ns
+        return (elapsed_ns / runs) / 1_000_000.0
+
     @staticmethod
     def benchmark_frackture(data: bytes) -> BenchmarkResult:
         """Benchmark Frackture compression with comprehensive verification metrics"""
@@ -456,9 +477,11 @@ class BenchmarkRunner:
                 fault_injection_errors.append(f"Fault injection test error: {str(e)}")
             
             # === 7. TIMING COMPLETION ===
-            hash_start = time.perf_counter()
-            _ = frackture_deterministic_hash(data)
-            hash_time = time.perf_counter() - hash_start
+            hash_runs = BenchmarkRunner._hash_runs_for_size(original_size)
+            hash_time = BenchmarkRunner._avg_latency_ms(
+                lambda: frackture_deterministic_hash(data),
+                runs=hash_runs,
+            )
             
             # Stop memory tracking
             peak_memory = mem_tracker.stop()
@@ -553,9 +576,11 @@ class BenchmarkRunner:
             decode_time = time.perf_counter() - decode_start
             
             # Hash timing (using same hash as Frackture for comparison)
-            hash_start = time.perf_counter()
-            _ = frackture_deterministic_hash(data)
-            hash_time = time.perf_counter() - hash_start
+            hash_runs = BenchmarkRunner._hash_runs_for_size(original_size)
+            hash_time = BenchmarkRunner._avg_latency_ms(
+                lambda: frackture_deterministic_hash(data),
+                runs=hash_runs,
+            )
             
             peak_memory = mem_tracker.stop()
             
@@ -641,9 +666,11 @@ class BenchmarkRunner:
             decode_time = time.perf_counter() - decode_start
             
             # Hash timing
-            hash_start = time.perf_counter()
-            _ = frackture_deterministic_hash(data)
-            hash_time = time.perf_counter() - hash_start
+            hash_runs = BenchmarkRunner._hash_runs_for_size(original_size)
+            hash_time = BenchmarkRunner._avg_latency_ms(
+                lambda: frackture_deterministic_hash(data),
+                runs=hash_runs,
+            )
             
             peak_memory = mem_tracker.stop()
             
@@ -698,19 +725,21 @@ class BenchmarkRunner:
             mem_tracker = MemoryTracker()
             mem_tracker.start()
             
+            hash_runs = BenchmarkRunner._hash_runs_for_size(original_size)
+            avg_ms = BenchmarkRunner._avg_latency_ms(lambda: hashlib.sha256(data).hexdigest(), runs=hash_runs)
+
             # Encode timing (Hashing)
-            encode_start = time.perf_counter()
-            digest = hashlib.sha256(data).digest()
-            encode_time = time.perf_counter() - encode_start
-            
+            encode_time = avg_ms / 1000.0
+            digest = hashlib.sha256(data).hexdigest()
+
             compressed_size = len(digest)
-            
+
             # Decode timing (None, irreversible)
             decode_time = 0.0
-            
+
             # Hash timing (Self)
-            hash_time = encode_time
-            
+            hash_time = avg_ms
+
             peak_memory = mem_tracker.stop()
             
             compression_ratio = original_size / compressed_size if compressed_size > 0 else 0
@@ -796,9 +825,11 @@ class BenchmarkRunner:
             assert decrypted == data, "Decryption mismatch"
             
             # Hash timing (using Frackture hash for consistency)
-            hash_start = time.perf_counter()
-            _ = frackture_deterministic_hash(data)
-            hash_time = time.perf_counter() - hash_start
+            hash_runs = BenchmarkRunner._hash_runs_for_size(original_size)
+            hash_time = BenchmarkRunner._avg_latency_ms(
+                lambda: frackture_deterministic_hash(data),
+                runs=hash_runs,
+            )
             
             peak_memory = mem_tracker.stop()
             
@@ -886,9 +917,11 @@ class BenchmarkRunner:
             decode_time = time.perf_counter() - decode_start
             
             # Hash timing
-            hash_start = time.perf_counter()
-            _ = frackture_deterministic_hash(data)
-            hash_time = time.perf_counter() - hash_start
+            hash_runs = BenchmarkRunner._hash_runs_for_size(original_size)
+            hash_time = BenchmarkRunner._avg_latency_ms(
+                lambda: frackture_deterministic_hash(data),
+                runs=hash_runs,
+            )
             
             peak_memory = mem_tracker.stop()
             
@@ -1095,7 +1128,7 @@ class ResultFormatter:
                     f"{result.decode_time * 1000:.2f}",
                     f"{result.encode_throughput:.2f} MB/s",
                     f"{result.decode_throughput:.2f} MB/s",
-                    f"{result.hash_time * 1000:.4f}",
+                    f"{result.hash_time:.4f}",
                     f"{result.peak_memory_mb:.2f}",
                     f"{result.serialized_total_bytes}",
                     "✓" if result.payload_is_96b else "✗",
@@ -1115,7 +1148,7 @@ class ResultFormatter:
                     f"{result.decode_time * 1000:.2f}",
                     f"{result.encode_throughput:.2f} MB/s",
                     f"{result.decode_throughput:.2f} MB/s",
-                    f"{result.hash_time * 1000:.4f}",
+                    f"{result.hash_time:.4f}",
                     f"{result.peak_memory_mb:.2f}",
                     "-",
                     "-",
@@ -1282,7 +1315,7 @@ class ResultFormatter:
                             f"| {result.decode_time * 1000:.2f} "
                             f"| {result.encode_throughput:.2f} MB/s "
                             f"| {result.decode_throughput:.2f} MB/s "
-                            f"| {result.hash_time * 1000:.4f} "
+                            f"| {result.hash_time:.4f} "
                             f"| {result.peak_memory_mb:.2f} "
                             f"| {result.serialized_total_bytes} "
                             f"| {'✅' if result.payload_is_96b else '❌'} "
@@ -1293,7 +1326,7 @@ class ResultFormatter:
                         )
                         lines.append(row)
                     else:
-                        lines.append(f"| {result.name} | {ResultFormatter.format_size(result.original_size)} | {ResultFormatter.format_size(result.compressed_size)} | {result.compression_ratio:.2f}x | {result.encode_time * 1000:.2f} | {result.decode_time * 1000:.2f} | {result.encode_throughput:.2f} MB/s | {result.decode_throughput:.2f} MB/s | {result.hash_time * 1000:.4f} | {result.peak_memory_mb:.2f} | - | - | - | - | - | - |")
+                        lines.append(f"| {result.name} | {ResultFormatter.format_size(result.original_size)} | {ResultFormatter.format_size(result.compressed_size)} | {result.compression_ratio:.2f}x | {result.encode_time * 1000:.2f} | {result.decode_time * 1000:.2f} | {result.encode_throughput:.2f} MB/s | {result.decode_throughput:.2f} MB/s | {result.hash_time:.4f} | {result.peak_memory_mb:.2f} | - | - | - | - | - | - |")
             else:
                 # Standard table for non-Frackture results
                 lines.append("| Method | Original | Compressed | Ratio | Encode (ms) | Decode (ms) | Enc Speed | Dec Speed | Hash (ms) | Mem (MB) |")
@@ -1312,7 +1345,7 @@ class ResultFormatter:
                             f"| {result.decode_time * 1000:.2f} "
                             f"| {result.encode_throughput:.2f} MB/s "
                             f"| {result.decode_throughput:.2f} MB/s "
-                            f"| {result.hash_time * 1000:.4f} "
+                            f"| {result.hash_time:.4f} "
                             f"| {result.peak_memory_mb:.2f} |"
                         )
                         lines.append(row)

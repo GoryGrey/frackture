@@ -190,6 +190,15 @@ assert hash1 != hash3  # Different inputs produce different hashes
 print(f"Hash: {hash1}")  # SHA256 hex digest
 ```
 
+**Hash normalization (fast path):** `frackture_deterministic_hash()` uses `normalize_to_bytes()` internally:
+
+- `bytes` / `memoryview` are hashed directly (no `str(data)` conversion)
+- `str` values are UTF-8 encoded
+- `dict` / `list` / `tuple` are serialized via canonical JSON (`sort_keys=True`)
+- `numpy.ndarray` values use `.tobytes()`
+
+The resulting bytes are streamed into `hashlib.sha256()` in chunks, so hashing latency for `bytes` inputs is typically within ~2× of raw `hashlib.sha256(data)`.
+
 ---
 
 ## 🏗️ Architecture Overview
