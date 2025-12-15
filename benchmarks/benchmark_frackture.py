@@ -53,6 +53,7 @@ serialize_frackture_payload = frackture_module.serialize_frackture_payload
 deserialize_frackture_payload = frackture_module.deserialize_frackture_payload
 compress_simple = frackture_module.compress_simple
 decompress_simple = frackture_module.decompress_simple
+compress_preset_micro = frackture_module.compress_preset_micro
 compress_preset_tiny = frackture_module.compress_preset_tiny
 compress_preset_default = frackture_module.compress_preset_default
 compress_preset_large = frackture_module.compress_preset_large
@@ -2091,6 +2092,41 @@ def run_benchmark_suite(
         _finalize_bucket(bucket)
     for bucket in competition_summary["overall"]["brotli_by_quality"].values():
         _finalize_bucket(bucket)
+
+    # Benchmark guard: Check that average serialized payload size < 200 bytes
+    frackture_results = []
+    for dataset_key, results in all_results.items():
+        for result in results:
+            if result.name == "Frackture" and result.serialized_total_bytes > 0:
+                frackture_results.append(result.serialized_total_bytes)
+    
+    if frackture_results:
+        avg_payload_size = sum(frackture_results) / len(frackture_results)
+        max_payload_size = max(frackture_results)
+        min_payload_size = min(frackture_results)
+        
+        print(f"\n📏 Payload Size Guard Check:")
+        print(f"  Average serialized size: {avg_payload_size:.1f} bytes")
+        print(f"  Min/Max: {min_payload_size}/{max_payload_size} bytes")
+        print(f"  Frackture payloads tested: {len(frackture_results)}")
+        
+        # Fail if average exceeds 200 bytes (micro-tier optimization failure)
+        if avg_payload_size >= 200:
+            print(f"\n❌ BENCHMARK GUARD FAILURE: Average payload size {avg_payload_size:.1f} >= 200 bytes")
+            print("   This indicates the micro-tier optimization is not working effectively.")
+            print("   Micro-tier should reduce overhead for tiny inputs.")
+            # Don't exit - let the benchmarks complete but flag the issue
+            
+            # Add guard failure to benchmark config
+            benchmark_config["guard_failures"] = benchmark_config.get("guard_failures", [])
+            benchmark_config["guard_failures"].append({
+                "type": "payload_size_average",
+                "threshold": 200,
+                "actual": avg_payload_size,
+                "message": f"Average serialized payload size {avg_payload_size:.1f} exceeds 200 byte target"
+            })
+        else:
+            print(f"✅ Payload size guard passed: {avg_payload_size:.1f} < 200 bytes")
 
     # Save results
     timestamp = time.strftime("%Y%m%d_%H%M%S")

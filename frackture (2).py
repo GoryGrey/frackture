@@ -23,6 +23,7 @@ class CompressionTier(Enum):
     TINY = "tiny"        # < 100 bytes
     DEFAULT = "default"  # 100 bytes - 10 MB
     LARGE = "large"      # 10+ MB
+    MICRO = "micro"      # < 50 bytes (new micro-tier)
 
 
 ### === Compact Payload Format === ###
@@ -35,11 +36,15 @@ class FrackturePayload:
     binary format suitable for serialization.
     
     For backward compatibility, also supports dict-like access.
+    
+    Micro-tier uses 8 entropy features (16 bytes) instead of 16 features (32 bytes)
+    for ultra-compact serialization of tiny inputs.
     """
     symbolic: bytes  # 32 bytes raw
-    entropy: list  # 16 float32 values quantized to uint16
+    entropy: list  # 16 float32 values (standard) or 8 values (micro)
     tier_name: str  # Tier metadata
     version: int = 1  # Payload format version
+    is_micro: bool = False  # True if micro-tier layout (8 entropy features)
     
     def __getitem__(self, key):
         """Allow dict-like access for backward compatibility."""
@@ -70,49 +75,75 @@ class FrackturePayload:
     
     def to_bytes(self) -> bytes:
         """Serialize payload to compact binary format."""
-        # Header: version (5 bits) + tier flags (3 bits)
+        # Header: version (4 bits) + tier flags (3 bits) + micro flag (1 bit)
         tier_flags = {
-            CompressionTier.TINY: 0b001,
-            CompressionTier.DEFAULT: 0b010,
+            CompressionTier.MICRO: 0b001,
+            CompressionTier.TINY: 0b010,
+            CompressionTier.DEFAULT: 0b011,
             CompressionTier.LARGE: 0b100
-        }.get(CompressionTier(self.tier_name), 0b010)
+        }.get(CompressionTier(self.tier_name), 0b011)
         
-        header = (self.version << 3) | tier_flags
+        micro_flag = 1 if self.is_micro else 0
+        header = (self.version << 4) | (tier_flags << 1) | micro_flag
         
-        # Pack entropy values as uint16 (quantized from float32)
-        # Scale factor for quantization - adjust based on typical entropy ranges
-        entropy_data = struct.pack('<' + 'H' * 16, *self.entropy)
+        # Determine entropy format based on micro flag
+        if self.is_micro:
+            # Micro format: 8 entropy features (16 bytes instead of 32)
+            entropy_data = struct.pack('<' + 'H' * 8, *self.entropy)
+        else:
+            # Standard format: 16 entropy features (32 bytes)
+            entropy_data = struct.pack('<' + 'H' * 16, *self.entropy)
         
-        # Total format: header (1 byte) + symbolic (32 bytes) + entropy (32 bytes)
+        # Total format: header (1 byte) + symbolic (32 bytes) + entropy (16 or 32 bytes)
         return bytes([header]) + self.symbolic + entropy_data
     
     @classmethod
     def from_bytes(cls, data: bytes) -> 'FrackturePayload':
         """Deserialize payload from compact binary format."""
-        if len(data) < 65:  # 1 + 32 + 32
+        if len(data) < 49:  # 1 + 32 + 16 (minimum for micro format)
             raise ValueError("Invalid compact payload: too short")
         
         # Parse header
         header = data[0]
-        version = (header >> 3) & 0x1F  # 5 bits for version
-        tier_flags = header & 0x07  # 3 bits for tier
+        version = (header >> 4) & 0x0F  # 4 bits for version
+        tier_flags = (header >> 1) & 0x07  # 3 bits for tier
+        micro_flag = header & 0x01  # 1 bit for micro format
         
         if version != 1:
             raise ValueError(f"Unsupported payload version: {version}")
         
         tier_map = {
-            0b001: CompressionTier.TINY.value,
-            0b010: CompressionTier.DEFAULT.value,
+            0b001: CompressionTier.MICRO.value,
+            0b010: CompressionTier.TINY.value,
+            0b011: CompressionTier.DEFAULT.value,
             0b100: CompressionTier.LARGE.value
         }
         tier_name = tier_map.get(tier_flags, CompressionTier.DEFAULT.value)
         
-        # Extract symbolic (32 bytes) and entropy (32 bytes = 16 × uint16)
+        # Extract symbolic (32 bytes)
         symbolic = data[1:33]
-        entropy_bytes = data[33:65]
-        entropy = list(struct.unpack('<' + 'H' * 16, entropy_bytes))
         
-        return cls(symbolic=symbolic, entropy=entropy, tier_name=tier_name, version=version)
+        # Extract entropy based on micro flag
+        if micro_flag:
+            # Micro format: 8 entropy features (16 bytes = 8 × uint16)
+            if len(data) < 49:  # 1 + 32 + 16
+                raise ValueError("Invalid micro format payload: too short")
+            entropy_bytes = data[33:49]
+            entropy = list(struct.unpack('<' + 'H' * 8, entropy_bytes))
+        else:
+            # Standard format: 16 entropy features (32 bytes = 16 × uint16)
+            if len(data) < 65:  # 1 + 32 + 32
+                raise ValueError("Invalid standard format payload: too short")
+            entropy_bytes = data[33:65]
+            entropy = list(struct.unpack('<' + 'H' * 16, entropy_bytes))
+        
+        return cls(
+            symbolic=symbolic, 
+            entropy=entropy, 
+            tier_name=tier_name, 
+            version=version,
+            is_micro=bool(micro_flag)
+        )
     
     def to_legacy_dict(self) -> Dict[str, Any]:
         """Convert to legacy dict format for compatibility."""
@@ -131,11 +162,15 @@ class FrackturePayload:
         # Quantize float32 values to uint16
         quantized_entropy = [int(max(0, min(65535, x * 1000.0))) for x in payload_dict["entropy"]]
         
+        # Determine if this should be micro-tier based on entropy length
+        is_micro = len(quantized_entropy) == 8
+        
         return cls(
             symbolic=symbolic,
             entropy=quantized_entropy,
             tier_name=payload_dict.get("tier_name", CompressionTier.DEFAULT.value),
-            version=1
+            version=1,
+            is_micro=is_micro
         )
 
 
@@ -196,7 +231,9 @@ def select_tier(data: Union[str, bytes, dict, list, np.ndarray, Any]) -> Compres
     except Exception:
         return CompressionTier.DEFAULT
     
-    if size < 100:
+    if size < 50:
+        return CompressionTier.MICRO
+    elif size < 100:
         return CompressionTier.TINY
     elif size >= 10 * 1024 * 1024:  # 10 MB
         return CompressionTier.LARGE
@@ -230,7 +267,7 @@ def validate_frackture_payload(
 
     Valid payloads must have:
       - symbolic: 64-char hex string
-      - entropy: 16 finite numeric values
+      - entropy: 16 finite numeric values (standard) or 8 values (micro-tier)
 
     Payloads may optionally include tier metadata keys:
       - tier_name, category_name, actual_size_bytes, target_size_bytes
@@ -244,7 +281,10 @@ def validate_frackture_payload(
             # Validate FrackturePayload directly
             if not isinstance(payload.symbolic, bytes) or len(payload.symbolic) != 32:
                 raise ValueError("Invalid symbolic fingerprint")
-            if not isinstance(payload.entropy, list) or len(payload.entropy) != 16:
+            if not isinstance(payload.entropy, list):
+                raise ValueError("Invalid entropy channel")
+            # Support both 16 features (standard) and 8 features (micro-tier)
+            if len(payload.entropy) not in (8, 16):
                 raise ValueError("Invalid entropy channel")
             if not isinstance(payload.tier_name, str):
                 raise ValueError("Invalid tier_name")
@@ -288,7 +328,8 @@ def validate_frackture_payload(
 
         if not isinstance(entropy_iter, (list, tuple)):
             raise ValueError("Invalid entropy channel")
-        if len(entropy_iter) != _FRACKTURE_ENTROPY_LEN:
+        # Support both standard (16) and micro-tier (8) entropy lengths
+        if len(entropy_iter) not in (8, 16):
             raise ValueError("Invalid entropy channel")
 
         for value in entropy_iter:
@@ -432,6 +473,7 @@ def symbolic_channel_decode(symbolic_hash):
 
 ### === Entropy Channel System === ###
 def entropy_channel_encode(input_vector):
+    """Standard entropy channel encoder producing 16 features."""
     fft_vector = np.abs(fft(input_vector))
 
     if len(fft_vector) >= 16:
@@ -466,11 +508,59 @@ def entropy_channel_encode(input_vector):
     return [float(x) for x in features]
 
 
+def entropy_channel_encode_micro(input_vector):
+    """
+    Micro-tier entropy channel encoder producing only 8 features for ultra-compact payloads.
+    
+    This function is designed for <50 byte inputs and produces fewer, more essential features
+    to achieve the smallest possible serialized payload size while maintaining reconstruction quality.
+    """
+    fft_vector = np.abs(fft(input_vector))
+
+    if len(fft_vector) >= 8:
+        chunk_size = len(fft_vector) // 8
+        chunks = [
+            fft_vector[i : i + chunk_size]
+            for i in range(0, len(fft_vector) - chunk_size + 1, chunk_size)
+        ]
+
+        while len(chunks) < 8:
+            chunks.append(fft_vector[:chunk_size])
+        chunks = chunks[:8]
+
+        features = []
+        for chunk in chunks:
+            features.extend([np.mean(chunk), np.std(chunk)])  # Only 2 features per chunk
+
+        features = features[:8]
+    else:
+        features = []
+        for i in range(8):
+            if i < len(fft_vector):
+                features.append(fft_vector[i])
+            else:
+                features.append(fft_vector[i % len(fft_vector)])
+
+    if len(features) < 8:
+        features.extend([np.mean(fft_vector)] * (8 - len(features)))
+    elif len(features) > 8:
+        features = features[:8]
+
+    return [float(x) for x in features]
+
+
 def entropy_channel_decode(entropy_data):
     validate_frackture_payload(entropy=entropy_data)
 
     ent = np.array([float(x) for x in entropy_data], dtype=np.float32)
-    expanded = np.tile(ent, 48)[:768]
+    
+    # Handle both micro-tier (8 features) and standard (16 features)
+    if len(ent) == 8:
+        # Micro-tier: 8 features, need to expand more aggressively
+        expanded = np.tile(ent, 96)[:768]  # 768 / 8 = 96
+    else:
+        # Standard: 16 features
+        expanded = np.tile(ent, 48)[:768]  # 768 / 16 = 48
 
     if not np.all(np.isfinite(expanded)):
         raise ValueError("Corrupted entropy channel")
@@ -492,6 +582,8 @@ def frackture_v3_3_safe(input_vector, tier: Optional[CompressionTier] = None):
     
     Returns a lightweight FrackturePayload dataclass that exposes .to_bytes() / .from_bytes().
     
+    For micro-tier, uses 8-feature entropy encoding for ultra-compact payloads.
+    
     Args:
         input_vector: Preprocessed 768-length vector
         tier: Optional CompressionTier. If None, defaults to DEFAULT.
@@ -503,13 +595,21 @@ def frackture_v3_3_safe(input_vector, tier: Optional[CompressionTier] = None):
         tier = CompressionTier.DEFAULT
     
     symbolic_hex = symbolic_channel_encode(input_vector, tier=tier)
-    entropy_values = entropy_channel_encode(input_vector)
+    
+    # Use micro-tier entropy encoder for micro-tier inputs
+    if tier == CompressionTier.MICRO:
+        entropy_values = entropy_channel_encode_micro(input_vector)
+        is_micro = True
+    else:
+        entropy_values = entropy_channel_encode(input_vector)
+        is_micro = False
     
     return FrackturePayload(
         symbolic=bytes.fromhex(symbolic_hex),
         entropy=[int(max(0, min(65535, x * 1000.0))) for x in entropy_values],
         tier_name=tier.value,
-        version=1
+        version=1,
+        is_micro=is_micro
     )
 
 
@@ -519,7 +619,8 @@ def frackture_v3_3_reconstruct(payload):
     
     Accepts legacy dict, FrackturePayload dataclass, or raw bytes.
     Honors tier metadata for specialized reconstruction:
-    - Tiny tier: Heavier weighting on symbolic fingerprint (70/30 split)
+    - Micro tier: Maximum symbolic weighting (80/20 split)
+    - Tiny tier: Heavy symbolic weighting (70/30 split)  
     - Other tiers: Balanced 50/50 merge
     
     Args:
@@ -552,7 +653,11 @@ def frackture_v3_3_reconstruct(payload):
     entropy_part = entropy_channel_decode(entropy_data)
     symbolic_part = symbolic_channel_decode(symbolic_hex)
     
-    if tier_name == CompressionTier.TINY.value:
+    if tier_name == CompressionTier.MICRO.value:
+        # For micro tier, use maximum symbolic weighting for best identity preservation
+        # Symbolic: 80%, Entropy: 20%
+        return (0.8 * np.array(symbolic_part) + 0.2 * np.array(entropy_part)).astype(np.float32)
+    elif tier_name == CompressionTier.TINY.value:
         # For tiny tier, weight symbolic more heavily (better identity preservation)
         # Symbolic: 70%, Entropy: 30%
         return (0.7 * np.array(symbolic_part) + 0.3 * np.array(entropy_part)).astype(np.float32)
@@ -566,31 +671,42 @@ def optimize_frackture(input_vector, num_trials=5, tier: Optional[CompressionTie
     """
     Self-optimizing encoder that minimizes reconstruction MSE.
     
-    For tiny tier, uses reduced trial count (2 instead of 5) for efficiency.
+    For micro tier, uses reduced trial count (1 instead of 5) for efficiency.
+    For tiny tier, uses reduced trial count (2 instead of 5).
     
     Args:
         input_vector: Preprocessed 768-length vector
-        num_trials: Number of optimization trials (reduced to 2 for tiny tier)
-        tier: Optional CompressionTier. If tiny, reduces trials automatically.
+        num_trials: Number of optimization trials (reduced for small tiers)
+        tier: Optional CompressionTier. If tiny or micro, reduces trials automatically.
         
     Returns:
         tuple: (best_payload, best_mse)
     """
-    if tier == CompressionTier.TINY:
+    if tier == CompressionTier.MICRO:
+        num_trials = 1
+    elif tier == CompressionTier.TINY:
         num_trials = 2
     
     best_payload = None
     best_mse = float("inf")
     for trial in range(num_trials):
         symbolic_hex = frackture_symbolic_fingerprint_f_infinity(input_vector, passes=trial + 2, tier=tier)
-        entropy_values = entropy_channel_encode(input_vector)
+        
+        # Use appropriate entropy encoder based on tier
+        if tier == CompressionTier.MICRO:
+            entropy_values = entropy_channel_encode_micro(input_vector)
+            is_micro = True
+        else:
+            entropy_values = entropy_channel_encode(input_vector)
+            is_micro = False
         
         # Create FrackturePayload for consistency
         payload = FrackturePayload(
             symbolic=bytes.fromhex(symbolic_hex),
             entropy=[int(max(0, min(65535, x * 1000.0))) for x in entropy_values],
             tier_name=(tier or CompressionTier.DEFAULT).value,
-            version=1
+            version=1,
+            is_micro=is_micro
         )
         
         recon = frackture_v3_3_reconstruct(payload)
@@ -652,6 +768,11 @@ def decompress_simple(payload, input_data=None):
 
 
 # Preset helpers for common use cases
+def compress_preset_micro(data, optimize=False, return_format="compact"):
+    """Compress using MICRO tier preset for ultra-compact payloads."""
+    return compress_simple(data, tier=CompressionTier.MICRO, optimize=optimize, return_format=return_format)
+
+
 def compress_preset_tiny(data, optimize=False, return_format="compact"):
     """Compress using TINY tier preset."""
     return compress_simple(data, tier=CompressionTier.TINY, optimize=optimize, return_format=return_format)
