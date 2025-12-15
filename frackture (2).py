@@ -6,7 +6,7 @@ import math
 import struct
 from dataclasses import dataclass, asdict
 from enum import Enum
-from typing import Any, Dict, Iterable, Optional, Union
+from typing import Any, Dict, Iterable, Optional, Union, Iterator
 
 import numpy as np
 from scipy.fft import fft
@@ -380,7 +380,8 @@ def frackture_preprocess_universal_v2_6(data, tier: Optional[CompressionTier] = 
             padded = np.pad(normed, (0, 768 - len(normed) % 768), mode="wrap")
             return padded[:768].astype(np.float32)
             
-    except Exception:
+    except Exception as e:
+        print(f"DEBUG: frackture_preprocess_universal_v2_6 failed for input {type(data)}: {e}")
         return np.zeros(768, dtype=np.float32)
 
 
@@ -672,52 +673,103 @@ def compress_preset_large(data, optimize=False, return_format="compact"):
 _HASH_CHUNK_SIZE = 1024 * 1024  # 1MiB
 
 
-def normalize_to_bytes(data: Any) -> Union[bytes, memoryview]:
+try:
+    # usedforsecurity available in Python 3.9+
+    _HASHER_TEMPLATE = hashlib.sha256(usedforsecurity=False)
+except TypeError:
+    _HASHER_TEMPLATE = hashlib.sha256()
+
+
+def _dump_component(data: Any, is_key: bool = False) -> bytes:
+    """Helper to dump a single component for streaming hash."""
+    try:
+        # keys in json must be strings
+        if is_key and not isinstance(data, str):
+            data = str(data)
+        
+        return json.dumps(
+            data,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        return str(data).encode("utf-8")
+
+
+def _stream_json_like(data: Any) -> Iterator[bytes]:
+    """Stream JSON-like representation of data."""
+    if isinstance(data, dict):
+        yield b"{"
+        items = sorted(data.items())
+        for i, (k, v) in enumerate(items):
+            if i > 0:
+                yield b","
+            yield _dump_component(k, is_key=True)
+            yield b":"
+            yield from _stream_json_like(v)
+        yield b"}"
+    elif isinstance(data, (list, tuple)):
+        yield b"["
+        for i, v in enumerate(data):
+            if i > 0:
+                yield b","
+            yield from _stream_json_like(v)
+        yield b"]"
+    else:
+        yield _dump_component(data)
+
+
+def normalize_to_bytes(data: Any) -> Iterator[Union[bytes, memoryview]]:
     """Normalize arbitrary data into bytes for hashing.
 
     Fast-paths bytes-like objects and uses deterministic JSON for dict/list.
+    Returns an iterator of bytes/memoryview chunks to avoid large copies.
     """
 
+    if isinstance(data, FrackturePayload):
+        yield data.to_bytes()
+        return
+
     if isinstance(data, memoryview):
-        return data
+        yield data
+        return
 
     if isinstance(data, (bytes, bytearray)):
-        return memoryview(data)
+        yield memoryview(data)
+        return
 
     if isinstance(data, str):
-        return data.encode("utf-8")
+        yield data.encode("utf-8")
+        return
 
     if isinstance(data, np.ndarray):
-        return data.tobytes()
+        try:
+            yield memoryview(data)
+        except (ValueError, TypeError):
+            # Fallback for non-contiguous arrays
+            yield data.tobytes()
+        return
 
     if isinstance(data, (dict, list, tuple)):
-        try:
-            return json.dumps(
-                data,
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=False,
-                default=str,
-            ).encode("utf-8")
-        except (TypeError, ValueError):
-            return str(data).encode("utf-8")
+        yield from _stream_json_like(data)
+        return
 
-    return str(data).encode("utf-8")
+    yield str(data).encode("utf-8")
 
 
 def frackture_deterministic_hash(data, salt=""):
     """Generate deterministic hash for collision testing."""
 
-    normalized = normalize_to_bytes(data)
-    mv = normalized if isinstance(normalized, memoryview) else memoryview(normalized)
+    hasher = _HASHER_TEMPLATE.copy()
 
-    hasher = hashlib.sha256()
-
-    if len(mv) <= _HASH_CHUNK_SIZE:
-        hasher.update(mv)
-    else:
-        for offset in range(0, len(mv), _HASH_CHUNK_SIZE):
-            hasher.update(mv[offset : offset + _HASH_CHUNK_SIZE])
+    for chunk in normalize_to_bytes(data):
+        mv = chunk if isinstance(chunk, memoryview) else memoryview(chunk)
+        if len(mv) <= _HASH_CHUNK_SIZE:
+            hasher.update(mv)
+        else:
+            for offset in range(0, len(mv), _HASH_CHUNK_SIZE):
+                hasher.update(mv[offset : offset + _HASH_CHUNK_SIZE])
 
     if salt:
         hasher.update(str(salt).encode("utf-8"))

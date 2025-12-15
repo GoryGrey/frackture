@@ -97,6 +97,7 @@ class BenchmarkResult:
     hash_time: float
     peak_memory_mb: float
     success: bool
+    sha256_time: Optional[float] = None
     error: str = ""
 
     # Competitor settings (for multi-level sweeps)
@@ -524,6 +525,12 @@ class BenchmarkRunner:
                 runs=hash_runs,
             )
             
+            # Baseline SHA256 timing for comparison
+            sha256_time = BenchmarkRunner._avg_latency_ms(
+                lambda: hashlib.sha256(data).hexdigest(),
+                runs=hash_runs,
+            )
+            
             # Stop memory tracking
             peak_memory = mem_tracker.stop()
             
@@ -544,6 +551,7 @@ class BenchmarkRunner:
                 encode_throughput=encode_throughput,
                 decode_throughput=decode_throughput,
                 hash_time=hash_time,
+                sha256_time=sha256_time,
                 peak_memory_mb=peak_memory,
                 success=True,
                 # New verification metrics
