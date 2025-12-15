@@ -66,6 +66,25 @@ pip install frackture
 
 Create fixed-size fingerprints for data integrity, deduplication, or similarity detection:
 
+**🚀 Simple API (Recommended):**
+```python
+from frackture import compress_simple, decompress_simple, FrackturePayload
+
+# One-liner compression: preprocess → encode → optimize → serialize
+compact_bytes = compress_simple("Hello world. This is a test of the emergency broadcast system.")
+print(f"Compressed size: {len(compact_bytes)} bytes")  # ~65 bytes
+
+# One-liner decompression: deserialize → reconstruct
+reconstructed = decompress_simple(compact_bytes)
+print(f"Reconstructed length: {len(reconstructed)} floats")  # 768 floats
+
+# Preset helpers for specific tiers
+tiny_bytes = compress_simple("short", return_format="compact")  # TINY tier
+default_bytes = compress_simple("medium data" * 100, return_format="compact")  # DEFAULT tier
+large_bytes = compress_simple("large data" * 10000, return_format="compact")  # LARGE tier
+```
+
+**Advanced API (Legacy Compatibility):**
 ```python
 from frackture import (
     frackture_preprocess_universal_v2_6,
@@ -84,27 +103,29 @@ tier = select_tier(data)  # Returns CompressionTier.DEFAULT
 # Preprocess to normalized 768-length vector (tier-aware)
 preprocessed = frackture_preprocess_universal_v2_6(data, tier=tier)
 
-# Encode to fixed ~96-byte payload (tier-aware)
+# Encode to lightweight FrackturePayload with .to_bytes() / .from_bytes()
 payload = frackture_v3_3_safe(preprocessed, tier=tier)
-print(f"Compressed size: {len(payload['symbolic']) + len(payload['entropy']) * 8} bytes")
-print(f"Tier: {payload.get('tier_name', 'default')}")
+print(f"Compressed size: {len(payload.to_bytes())} bytes")  # ~65 bytes
+print(f"Tier: {payload.tier_name}")
 
 # Reconstruct approximate representation (tier-aware)
 reconstructed = frackture_v3_3_reconstruct(payload)
-
-# payload contains:
-# - 'symbolic': 64-char hex string (32 bytes) - identity fingerprint
-# - 'entropy': 16 floats (128 bytes serialized) - frequency signature
-# - 'tier_name': 'tiny'|'default'|'large' - compression mode metadata
 ```
 
-**Output structure:**
+**New Compact Payload Format:**
 ```python
-{
-    "symbolic": "a3f5c8e2d9b1f7a4...",  # 64-char hex fingerprint
-    "entropy": [0.234, 0.891, ...],     # 16-element frequency signature
-    "tier_name": "default"              # Compression tier for this input
-}
+# FrackturePayload with efficient binary serialization
+payload = frackture_v3_3_safe(preprocessed)
+
+# Serialize to compact binary format (~65 bytes)
+compact = payload.to_bytes()  # Header + 32B symbolic + 32B entropy
+
+# Deserialize back to FrackturePayload
+restored = FrackturePayload.from_bytes(compact)
+
+# Legacy dict compatibility
+legacy_dict = payload.to_legacy_dict()  # Convert to dict format
+restored_from_dict = FrackturePayload.from_legacy_dict(legacy_dict)  # Convert back
 ```
 
 #### Compression Tiers

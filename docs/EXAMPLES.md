@@ -19,11 +19,44 @@ This document provides copy-pastable examples for all Frackture workflows, from 
 
 ## Basic Usage
 
-### Minimal Example
+### 🚀 Recommended: Simple API
+
+For most use cases, use the simple wrappers that handle everything in one call:
 
 ```python
-# Import from the module
-import sys
+# Import simple wrappers (recommended)
+from frackture import compress_simple, decompress_simple
+
+# One-liner compression (auto-detects tier)
+data = "Hello, Frackture!"
+compact_bytes = compress_simple(data)
+
+# One-liner decompression 
+reconstructed = decompress_simple(compact_bytes)
+
+print(f"Original: {data}")
+print(f"Compressed size: {len(compact_bytes)} bytes")
+print(f"Reconstructed length: {len(reconstructed)} floats")
+
+# Available presets
+tiny_bytes = compress_simple("short", return_format="compact")     # TINY tier
+default_bytes = compress_simple("medium data" * 100)              # DEFAULT tier
+large_bytes = compress_simple("large data" * 10000)               # LARGE tier
+
+# With optimization for better quality
+optimized_bytes = compress_simple(data, optimize=True)
+reconstructed_optimized = decompress_simple(optimized_bytes)
+
+# Legacy JSON format if needed
+json_payload = compress_simple(data, return_format="json")
+```
+
+### Advanced API (Legacy Compatibility)
+
+For full control over the compression process:
+
+```python
+# Import advanced components
 import importlib.util
 
 # Load frackture module
@@ -31,23 +64,62 @@ spec = importlib.util.spec_from_file_location("frackture", "frackture (2).py")
 frackture = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(frackture)
 
-# Use the functions
+# Use the advanced functions
 from frackture import (
     frackture_preprocess_universal_v2_6 as preprocess,
     frackture_v3_3_safe as compress,
     frackture_v3_3_reconstruct as decompress
 )
 
-# Process data
+# Process data with manual tier control
 data = "Hello, Frackture!"
 preprocessed = preprocess(data)
 payload = compress(preprocessed)
 reconstructed = decompress(payload)
 
 print(f"Original: {data}")
-print(f"Payload size: ~{len(payload['symbolic']) + len(payload['entropy']) * 8} bytes")
+print(f"Compressed size: {len(payload.to_bytes())} bytes")
 print(f"Reconstructed shape: {reconstructed.shape}")
 ```
+
+### New Compact Payload Format
+
+The new `FrackturePayload` class provides efficient binary serialization:
+
+```python
+from frackture import FrackturePayload, serialize_frackture_payload, deserialize_frackture_payload
+
+# Get FrackturePayload from compression
+payload = frackture_v3_3_safe(preprocessed)
+
+# Serialize to compact binary format
+compact_bytes = payload.to_bytes()  # ~65 bytes total
+print(f"Header: {compact_bytes[0]} bits")
+print(f"Symbolic: {len(payload.symbolic)} bytes")
+print(f"Entropy: {len(payload.entropy)} values (quantized)")
+
+# Deserialize back
+restored_payload = FrackturePayload.from_bytes(compact_bytes)
+
+# Legacy dict compatibility
+legacy_dict = payload.to_legacy_dict()
+restored_from_dict = FrackturePayload.from_legacy_dict(legacy_dict)
+
+# Helper functions work with any format
+serialized = serialize_frackture_payload(payload)     # From FrackturePayload
+serialized = serialize_frackture_payload(legacy_dict) # From dict
+deserialized = deserialize_frackture_payload(serialized) # Back to FrackturePayload
+```
+
+### Choosing Your API
+
+| API Style | Best For | Pros | Cons |
+|-----------|----------|------|------|
+| **Simple Wrappers** | Most use cases, prototypes | One-liner, auto-tier, binary output | Less control |
+| **Advanced API** | Research, custom tiers | Full control, tier-aware | More verbose |
+| **Legacy Dict** | Existing code | No changes needed | Larger size, slower |
+
+**Recommendation:** Start with `compress_simple` and `decompress_simple`. If you need more control, use the advanced API.
 
 ### Quick Import Helper
 

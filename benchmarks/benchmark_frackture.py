@@ -47,6 +47,16 @@ frackture_decrypt_payload = frackture_module.frackture_decrypt_payload
 CompressionTier = frackture_module.CompressionTier
 select_tier = frackture_module.select_tier
 
+# New compact payload functions
+FrackturePayload = frackture_module.FrackturePayload
+serialize_frackture_payload = frackture_module.serialize_frackture_payload
+deserialize_frackture_payload = frackture_module.deserialize_frackture_payload
+compress_simple = frackture_module.compress_simple
+decompress_simple = frackture_module.decompress_simple
+compress_preset_tiny = frackture_module.compress_preset_tiny
+compress_preset_default = frackture_module.compress_preset_default
+compress_preset_large = frackture_module.compress_preset_large
+
 # Try to import cryptography for AES-GCM
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -317,23 +327,39 @@ class BenchmarkRunner:
             encode_time = time.perf_counter() - encode_start
             
             # === 2. PAYLOAD SIZING METRICS ===
-            # Calculate symbolic bytes (hex string length)
-            symbolic_bytes = len(payload['symbolic']) if payload['symbolic'] else 0
-            symbolic_bytes //= 2  # Convert hex chars to bytes (2 chars = 1 byte)
-            
-            # Calculate entropy bytes (16 floats * 8 bytes each for double precision)
-            entropy_bytes = len(payload['entropy']) * 8
-            
-            # Calculate serialized total
-            serializable_payload = {
-                'symbolic': payload['symbolic'],
-                'entropy': [float(x) for x in payload['entropy']]
-            }
-            payload_bytes = json.dumps(serializable_payload).encode()
-            serialized_total_bytes = len(payload_bytes)
-            
-            # Check if payload is ~96 bytes (allowing some variance for metadata)
-            payload_is_96b = 90 <= serialized_total_bytes <= 102
+            # Handle both dict (legacy) and FrackturePayload (new) formats
+            if hasattr(payload, 'to_bytes'):  # It's a FrackturePayload
+                # Use compact format for measurement
+                compact_bytes = payload.to_bytes()
+                serialized_total_bytes = len(compact_bytes)
+                payload_is_96b = 90 <= serialized_total_bytes <= 102
+                
+                # Calculate symbolic and entropy bytes from compact format
+                symbolic_bytes = 32  # Fixed 32 bytes in compact format
+                entropy_bytes = 32   # 16 uint16 values = 32 bytes
+            else:  # Legacy dict format
+                # Calculate symbolic bytes (hex string length)
+                symbolic_bytes = len(payload['symbolic']) if payload['symbolic'] else 0
+                symbolic_bytes //= 2  # Convert hex chars to bytes (2 chars = 1 byte)
+                
+                # Calculate entropy bytes (16 floats * 8 bytes each for double precision)
+                entropy_bytes = len(payload['entropy']) * 8
+                
+                # Calculate serialized total using compact format for comparison
+                try:
+                    from frackture_module import serialize_frackture_payload
+                    compact_bytes = serialize_frackture_payload(payload)
+                    serialized_total_bytes = len(compact_bytes)
+                    payload_is_96b = 90 <= serialized_total_bytes <= 102
+                except:
+                    # Fallback to legacy JSON if compact serialization fails
+                    serializable_payload = {
+                        'symbolic': payload['symbolic'],
+                        'entropy': [float(x) for x in payload['entropy']]
+                    }
+                    payload_bytes = json.dumps(serializable_payload).encode()
+                    serialized_total_bytes = len(payload_bytes)
+                    payload_is_96b = 90 <= serialized_total_bytes <= 102
             
             # === 3. RECONSTRUCTION QUALITY ===
             decode_start = time.perf_counter()
@@ -371,10 +397,15 @@ class BenchmarkRunner:
             if len(deterministic_payloads) > 1:
                 first_payload = deterministic_payloads[0]
                 for i in range(1, len(deterministic_payloads)):
-                    if (first_payload['symbolic'] != deterministic_payloads[i]['symbolic'] or
-                        first_payload['entropy'] != deterministic_payloads[i]['entropy']):
-                        is_deterministic = False
-                        determinism_drifts += 1
+                    if hasattr(first_payload, 'to_bytes'):  # FrackturePayload format
+                        if first_payload.to_bytes() != deterministic_payloads[i].to_bytes():
+                            is_deterministic = False
+                            determinism_drifts += 1
+                    else:  # Legacy dict format
+                        if (first_payload['symbolic'] != deterministic_payloads[i]['symbolic'] or
+                            first_payload['entropy'] != deterministic_payloads[i]['entropy']):
+                            is_deterministic = False
+                            determinism_drifts += 1
             
             # === 6. FAULT INJECTION ===
             fault_injection_passed = True
@@ -397,43 +428,53 @@ class BenchmarkRunner:
 
                 fault_injection_key = "benchmark_fault_injection_key"
 
-                payload_with_meta = {
-                    "symbolic": payload["symbolic"],
-                    "entropy": payload["entropy"],
-                    "tier_name": "benchmark",
-                    "category_name": "benchmark",
-                    "actual_size_bytes": original_size,
-                    "target_size_bytes": original_size,
-                }
+                # Handle both payload formats for fault injection
+                if hasattr(payload, 'to_bytes'):  # FrackturePayload format
+                    payload_dict = payload.to_legacy_dict()
+                    payload_dict.update({
+                        "tier_name": "benchmark",
+                        "category_name": "benchmark",
+                        "actual_size_bytes": original_size,
+                        "target_size_bytes": original_size,
+                    })
+                else:  # Legacy dict format
+                    payload_dict = {
+                        "symbolic": payload["symbolic"],
+                        "entropy": payload["entropy"],
+                        "tier_name": "benchmark",
+                        "category_name": "benchmark",
+                        "actual_size_bytes": original_size,
+                        "target_size_bytes": original_size,
+                    }
 
                 # Raw payload tampering (structural corruption)
-                mutated_symbolic = "".join("FF" if c != "F" else "00" for c in payload["symbolic"])
+                mutated_symbolic = "".join("FF" if c != "F" else "00" for c in payload_dict["symbolic"])
                 _expect_value_error(
                     "Raw symbolic",
-                    lambda: frackture_v3_3_reconstruct({"symbolic": mutated_symbolic, "entropy": payload["entropy"]}),
+                    lambda: frackture_v3_3_reconstruct({"symbolic": mutated_symbolic, "entropy": payload_dict["entropy"]}),
                 )
 
-                mutated_entropy = list(payload["entropy"])
+                mutated_entropy = list(payload_dict["entropy"])
                 mutated_entropy[0] = float("nan")
                 _expect_value_error(
                     "Raw entropy",
-                    lambda: frackture_v3_3_reconstruct({"symbolic": payload["symbolic"], "entropy": mutated_entropy}),
+                    lambda: frackture_v3_3_reconstruct({"symbolic": payload_dict["symbolic"], "entropy": mutated_entropy}),
                 )
 
                 _expect_value_error(
                     "Raw metadata",
-                    lambda: frackture_v3_3_reconstruct({**payload_with_meta, "tier_name": 123}),
+                    lambda: frackture_v3_3_reconstruct({**payload_dict, "tier_name": 123}),
                 )
 
                 _expect_value_error("Raw empty", lambda: frackture_v3_3_reconstruct({}))
 
                 _expect_value_error(
                     "Raw invalid hex",
-                    lambda: frackture_v3_3_reconstruct({"symbolic": "INVALID_HEX_!@#$%", "entropy": payload["entropy"]}),
+                    lambda: frackture_v3_3_reconstruct({"symbolic": "INVALID_HEX_!@#$%", "entropy": payload_dict["entropy"]}),
                 )
 
                 # Encrypted payload tampering (integrity corruption)
-                encrypted = frackture_encrypt_payload(payload_with_meta, fault_injection_key)
+                encrypted = frackture_encrypt_payload(payload_dict, fault_injection_key)
 
                 sym = encrypted["data"]["symbolic"]
                 flipped_sym = ("0" if sym[0] != "0" else "1") + sym[1:]
