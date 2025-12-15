@@ -1,12 +1,33 @@
-"""
-Tests for hashing determinism and collision sampling
-"""
-import pytest
-import numpy as np
-from hypothesis import given, settings
-from hypothesis.strategies import text, binary, integers, floats, lists
+"""Tests for hashing determinism and collision sampling."""
+
 import hashlib
+import importlib.util
+import json
+import os
+import sys
 from collections import defaultdict
+
+import numpy as np
+import pytest
+from hypothesis import given, settings
+from hypothesis.strategies import binary, floats, integers, lists, text
+
+# Add parent directory to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+# Import the main module (handling the space in filename)
+module_path = os.path.join(os.path.dirname(__file__), "..", "frackture (2).py")
+spec = importlib.util.spec_from_file_location("frackture_2", module_path)
+frackture_module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(frackture_module)
+
+# Expose functions used by this test module
+frackture_deterministic_hash = frackture_module.frackture_deterministic_hash
+normalize_to_bytes = frackture_module.normalize_to_bytes
+frackture_preprocess_universal_v2_6 = frackture_module.frackture_preprocess_universal_v2_6
+symbolic_channel_encode = frackture_module.symbolic_channel_encode
+entropy_channel_encode = frackture_module.entropy_channel_encode
+frackture_symbolic_fingerprint_f_infinity = frackture_module.frackture_symbolic_fingerprint_f_infinity
 
 class TestHashing:
     """Test hashing determinism and collision detection"""
@@ -68,7 +89,44 @@ class TestHashing:
         assert hash1 != hash2
         assert hash1 != hash3
         assert hash2 != hash3
-    
+
+    def test_hash_normalization_helper(self):
+        """Test normalize_to_bytes() and verify hashing matches normalization."""
+
+        class _Custom:
+            def __init__(self, value: int):
+                self.value = value
+
+            def __str__(self) -> str:
+                return f"Custom({self.value})"
+
+        arr = np.array([1, 2, 3], dtype=np.int32)
+
+        cases = [
+            (b"abc", b"abc"),
+            (memoryview(b"xyz"), b"xyz"),
+            ("hello", "hello".encode("utf-8")),
+            ({"b": 2, "a": 1}, json.dumps({"b": 2, "a": 1}, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")),
+            ([1, "a"], json.dumps([1, "a"], sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str).encode("utf-8")),
+            (arr, arr.tobytes()),
+            (_Custom(123), str(_Custom(123)).encode("utf-8")),
+        ]
+
+        salt = "test_salt"
+        salt_bytes = salt.encode("utf-8")
+
+        for data, expected in cases:
+            normalized = normalize_to_bytes(data)
+            assert isinstance(normalized, (bytes, memoryview))
+            assert bytes(normalized) == expected
+
+            digest = frackture_deterministic_hash(data, salt)
+            assert isinstance(digest, str)
+            assert len(digest) == 64
+            bytes.fromhex(digest)  # should not raise
+
+            assert digest == hashlib.sha256(expected + salt_bytes).hexdigest()
+
     def test_symbolic_fingerprint_determinism(self):
         """Test that symbolic fingerprints are deterministic"""
         test_data = "symbolic determinism test"

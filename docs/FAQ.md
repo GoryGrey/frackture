@@ -320,6 +320,19 @@ authenticated = frackture_encrypt_payload({'encrypted': encrypted.decode()}, hma
 
 Frackture is **7x faster encoding**, **15x faster decoding** for large files.
 
+### Why is `frackture_deterministic_hash()` close to raw SHA256 latency?
+
+`frackture_deterministic_hash()` is intentionally implemented as a thin, deterministic wrapper around `hashlib.sha256()`.
+
+It uses `normalize_to_bytes()` to convert inputs to bytes efficiently:
+
+- `bytes` / `memoryview`: hashed directly
+- `str`: UTF-8 encoded
+- `dict` / `list` / `tuple`: canonical JSON (`sort_keys=True`, compact separators)
+- `numpy.ndarray`: `.tobytes()`
+
+After normalization, it streams the bytes into `hashlib.sha256()` in chunks, so for `bytes` payloads the measured latency is typically within ~2× the SHA256 baseline (the overhead is mainly Python call/loop overhead and optional salt handling).
+
 ### Does Frackture scale to large inputs?
 
 **Yes**, but with nuances:
