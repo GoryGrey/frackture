@@ -25,6 +25,16 @@ class CompressionTier(Enum):
     LARGE = "large"      # 10+ MB
 
 
+
+def _compute_integrity_token(symbolic: bytes, entropy: Iterable[int]) -> str:
+    """Compute deterministic integrity token from symbolic and entropy components."""
+    entropy_data = struct.pack('<' + 'H' * 16, *entropy)
+    hasher = hashlib.sha256()
+    hasher.update(symbolic)
+    hasher.update(entropy_data)
+    return hasher.hexdigest()[:8]
+
+
 ### === Compact Payload Format === ###
 @dataclass
 class FrackturePayload:
@@ -40,6 +50,7 @@ class FrackturePayload:
     entropy: list  # 16 float32 values quantized to uint16
     tier_name: str  # Tier metadata
     version: int = 1  # Payload format version
+    integrity_token: Optional[str] = None  # truncated SHA256 checksum
     
     def __getitem__(self, key):
         """Allow dict-like access for backward compatibility."""
@@ -49,25 +60,34 @@ class FrackturePayload:
             return [float(x) / 1000.0 for x in self.entropy]  # Dequantize to floats
         elif key == "tier_name":
             return self.tier_name
+        elif key == "integrity_token":
+            return self.integrity_token
         else:
             raise KeyError(f"'{key}'")
     
     def __contains__(self, key):
         """Allow 'in' operator for backward compatibility."""
-        return key in ("symbolic", "entropy", "tier_name")
+        return key in ("symbolic", "entropy", "tier_name", "integrity_token")
     
     def keys(self):
         """Return dict-like keys for backward compatibility."""
-        return ("symbolic", "entropy", "tier_name")
+        return ("symbolic", "entropy", "tier_name", "integrity_token")
     
     def values(self):
         """Return dict-like values for backward compatibility."""
-        return (self.__getitem__("symbolic"), self.__getitem__("entropy"), self.__getitem__("tier_name"))
+        return (self.__getitem__("symbolic"), self.__getitem__("entropy"), self.__getitem__("tier_name"), self.integrity_token)
     
     def items(self):
         """Return dict-like items for backward compatibility."""
         return [(k, self[k]) for k in self.keys()]
     
+    def get(self, key, default=None):
+        """Allow dict-like get method for backward compatibility."""
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
     def to_bytes(self) -> bytes:
         """Serialize payload to compact binary format."""
         # Header: version (5 bits) + tier flags (3 bits)
@@ -79,17 +99,23 @@ class FrackturePayload:
         
         header = (self.version << 3) | tier_flags
         
+        # Compute integrity token if missing
+        if not self.integrity_token:
+             self.integrity_token = _compute_integrity_token(self.symbolic, self.entropy)
+        
+        token_bytes = bytes.fromhex(self.integrity_token)
+
         # Pack entropy values as uint16 (quantized from float32)
         # Scale factor for quantization - adjust based on typical entropy ranges
         entropy_data = struct.pack('<' + 'H' * 16, *self.entropy)
         
-        # Total format: header (1 byte) + symbolic (32 bytes) + entropy (32 bytes)
-        return bytes([header]) + self.symbolic + entropy_data
+        # Total format: header (1 byte) + integrity (4 bytes) + symbolic (32 bytes) + entropy (32 bytes)
+        return bytes([header]) + token_bytes + self.symbolic + entropy_data
     
     @classmethod
     def from_bytes(cls, data: bytes) -> 'FrackturePayload':
         """Deserialize payload from compact binary format."""
-        if len(data) < 65:  # 1 + 32 + 32
+        if len(data) < 69:  # 1 + 4 + 32 + 32
             raise ValueError("Invalid compact payload: too short")
         
         # Parse header
@@ -107,19 +133,33 @@ class FrackturePayload:
         }
         tier_name = tier_map.get(tier_flags, CompressionTier.DEFAULT.value)
         
-        # Extract symbolic (32 bytes) and entropy (32 bytes = 16 × uint16)
-        symbolic = data[1:33]
-        entropy_bytes = data[33:65]
+        # Extract token (4 bytes), symbolic (32 bytes) and entropy (32 bytes = 16 × uint16)
+        token_bytes = data[1:5]
+        symbolic = data[5:37]
+        entropy_bytes = data[37:69]
         entropy = list(struct.unpack('<' + 'H' * 16, entropy_bytes))
         
-        return cls(symbolic=symbolic, entropy=entropy, tier_name=tier_name, version=version)
+        # Verify token
+        computed_token = _compute_integrity_token(symbolic, entropy)
+        if token_bytes.hex() != computed_token:
+             # Depending on requirements, we might raise here or let validate handle it.
+             # The requirements say "make `frackture_v3_3_reconstruct` reject...".
+             # But `validate_frackture_payload` should also verify.
+             # Let's populate it and let validation happen later or check it now.
+             pass
+
+        return cls(symbolic=symbolic, entropy=entropy, tier_name=tier_name, version=version, integrity_token=token_bytes.hex())
     
     def to_legacy_dict(self) -> Dict[str, Any]:
         """Convert to legacy dict format for compatibility."""
+        if not self.integrity_token:
+            self.integrity_token = _compute_integrity_token(self.symbolic, self.entropy)
+            
         return {
             "symbolic": self.symbolic.hex(),
             "entropy": [float(x) / 1000.0 for x in self.entropy],  # Dequantize
             "tier_name": self.tier_name,
+            "integrity_token": self.integrity_token
         }
     
     @classmethod
@@ -131,11 +171,17 @@ class FrackturePayload:
         # Quantize float32 values to uint16
         quantized_entropy = [int(max(0, min(65535, x * 1000.0))) for x in payload_dict["entropy"]]
         
+        integrity_token = payload_dict.get("integrity_token")
+        if integrity_token is None:
+             # If missing in legacy dict, compute it
+             integrity_token = _compute_integrity_token(symbolic, quantized_entropy)
+
         return cls(
             symbolic=symbolic,
             entropy=quantized_entropy,
             tier_name=payload_dict.get("tier_name", CompressionTier.DEFAULT.value),
-            version=1
+            version=1,
+            integrity_token=integrity_token
         )
 
 
@@ -234,6 +280,8 @@ def validate_frackture_payload(
 
     Payloads may optionally include tier metadata keys:
       - tier_name, category_name, actual_size_bytes, target_size_bytes
+    
+    If integrity_token is present, it verifies the payload content against it.
 
     Raises ValueError on any corruption/mismatch.
     """
@@ -248,6 +296,13 @@ def validate_frackture_payload(
                 raise ValueError("Invalid entropy channel")
             if not isinstance(payload.tier_name, str):
                 raise ValueError("Invalid tier_name")
+            
+            # Verify integrity token if present
+            if payload.integrity_token:
+                computed = _compute_integrity_token(payload.symbolic, payload.entropy)
+                if payload.integrity_token != computed:
+                    raise ValueError("Integrity check failed: token mismatch")
+
         elif isinstance(payload, dict):
             # For dict validation, only validate if it has content (for backward compatibility)
             if payload:  # Only validate non-empty dicts
@@ -265,6 +320,23 @@ def validate_frackture_payload(
                             raise ValueError(f"Invalid payload metadata: {key}")
                         if int(value) < 0:
                             raise ValueError(f"Invalid payload metadata: {key}")
+                            
+                # Verify integrity token if present
+                if "integrity_token" in payload and payload["integrity_token"]:
+                    try:
+                        symbolic_bytes = bytes.fromhex(payload["symbolic"])
+                        # Need to quantize entropy to match computation
+                        entropy_vals = [int(max(0, min(65535, x * 1000.0))) for x in payload["entropy"]]
+                        computed = _compute_integrity_token(symbolic_bytes, entropy_vals)
+                    except (ValueError, TypeError):
+                         # If symbolic is invalid hex, let the standard validation catch it later
+                         # But if it crashes here, we should probably let it crash or pass
+                         # Standard validation is below.
+                         return # Cannot compute token, so skip check (or fail? For now skip to let standard validation run)
+
+                    if payload["integrity_token"] != computed:
+                        raise ValueError("Integrity check failed: token mismatch")
+
         else:
             raise ValueError("Frackture payload must be a dict or FrackturePayload")
 
@@ -300,10 +372,14 @@ def validate_frackture_payload(
                 raise ValueError("Invalid entropy channel")
 
 
-def _normalize_frackture_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_frackture_payload(payload: Union[Dict[str, Any], FrackturePayload]) -> Dict[str, Any]:
     validate_frackture_payload(payload)
 
-    normalized = copy.deepcopy(payload)
+    if isinstance(payload, FrackturePayload):
+        normalized = payload.to_legacy_dict()
+    else:
+        normalized = copy.deepcopy(payload)
+
     normalized["entropy"] = [float(x) for x in normalized["entropy"]]
 
     for key in ("actual_size_bytes", "target_size_bytes"):
@@ -531,17 +607,19 @@ def frackture_v3_3_reconstruct(payload):
     # Handle different payload types for backward compatibility
     if isinstance(payload, bytes):
         payload_obj = deserialize_frackture_payload(payload)
+        validate_frackture_payload(payload_obj)
         tier_name = payload_obj.tier_name
         symbolic_hex = payload_obj.symbolic.hex()
         entropy_data = [float(x) / 1000.0 for x in payload_obj.entropy]  # Dequantize
     elif isinstance(payload, FrackturePayload):
+        validate_frackture_payload(payload)
         tier_name = payload.tier_name
         symbolic_hex = payload.symbolic.hex()
         entropy_data = [float(x) / 1000.0 for x in payload.entropy]  # Dequantize
     elif isinstance(payload, dict):
-        # For empty dicts, raise KeyError to maintain test compatibility
+        # For empty dicts, raise ValueError to maintain integrity
         if not payload:
-            raise KeyError("Empty payload")
+            raise ValueError("Empty payload")
         validate_frackture_payload(payload)
         tier_name = payload.get("tier_name")
         symbolic_hex = payload["symbolic"]

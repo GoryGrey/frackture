@@ -224,3 +224,49 @@ class TestVerification:
         """Test that pytest can run and capture verification requirements"""
         # This test ensures the infrastructure works for coverage reporting
         assert True  # Placeholder - actual coverage will be measured by pytest
+
+    def test_integrity_token_validation(self):
+        """Test that integrity token validation works correctly."""
+        test_data = "integrity test"
+        preprocessed = frackture_preprocess_universal_v2_6(test_data)
+        payload = frackture_v3_3_safe(preprocessed)
+        
+        # Verify valid payload reconstructs fine
+        frackture_v3_3_reconstruct(payload)
+        
+        # Convert to dict for tampering
+        payload_dict = payload.to_legacy_dict()
+        
+        # 1. Tamper symbolic
+        tampered_sym = payload_dict.copy()
+        orig_sym = tampered_sym["symbolic"]
+        # Flip first char (valid hex)
+        flipped_char = "0" if orig_sym[0] != "0" else "1"
+        tampered_sym["symbolic"] = flipped_char + orig_sym[1:]
+        
+        with pytest.raises(ValueError, match="Integrity check failed"):
+            frackture_v3_3_reconstruct(tampered_sym)
+            
+        # 2. Tamper entropy
+        tampered_ent = payload_dict.copy()
+        # Modify first entropy value
+        tampered_ent["entropy"] = list(tampered_ent["entropy"])
+        tampered_ent["entropy"][0] += 1.0
+        
+        with pytest.raises(ValueError, match="Integrity check failed"):
+            frackture_v3_3_reconstruct(tampered_ent)
+            
+        # 3. Tamper token
+        tampered_tok = payload_dict.copy()
+        orig_tok = tampered_tok["integrity_token"]
+        # Flip first char
+        flipped_char = "0" if orig_tok[0] != "0" else "1"
+        tampered_tok["integrity_token"] = flipped_char + orig_tok[1:]
+        
+        with pytest.raises(ValueError, match="Integrity check failed"):
+            frackture_v3_3_reconstruct(tampered_tok)
+
+    def test_empty_payload_rejection(self):
+        """Test that empty payloads are rejected with ValueError."""
+        with pytest.raises(ValueError, match="Empty payload"):
+            frackture_v3_3_reconstruct({})
