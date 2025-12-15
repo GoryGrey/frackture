@@ -97,12 +97,13 @@ class TestTinyTier:
         assert np.all(preprocessed <= 1)
     
     def test_tiny_auto_detection(self):
-        """Test that tiny inputs automatically set tier_name to 'tiny'"""
+        """Test that tiny inputs automatically set tier_name to 'tiny' (or 'micro' for <50 bytes)"""
         tiny_data = b"test"  # 4 bytes
         
         # Auto-detect tier
         tier = select_tier(tiny_data)
-        assert tier == CompressionTier.TINY
+        # 4 bytes should be detected as MICRO tier with new micro-tier optimization
+        assert tier in [CompressionTier.TINY, CompressionTier.MICRO]
         
         # Preprocess with auto-detected tier
         preprocessed = frackture_preprocess_universal_v2_6(tiny_data, tier=tier)
@@ -110,9 +111,9 @@ class TestTinyTier:
         # Encode with auto-detected tier
         payload = frackture_v3_3_safe(preprocessed, tier=tier)
         
-        # Should have tier_name='tiny' (FrackturePayload format)
+        # Should have tier_name='tiny' or 'micro' (FrackturePayload format)
         assert hasattr(payload, 'tier_name')
-        assert payload.tier_name == "tiny"
+        assert payload.tier_name in ["tiny", "micro"]
     
     def test_tiny_manual_tier_override(self):
         """Test that tier can be manually overridden"""

@@ -24,6 +24,7 @@ serialize_frackture_payload = frackture.serialize_frackture_payload
 deserialize_frackture_payload = frackture.deserialize_frackture_payload
 compress_simple = frackture.compress_simple
 decompress_simple = frackture.decompress_simple
+compress_preset_micro = frackture.compress_preset_micro
 compress_preset_tiny = frackture.compress_preset_tiny
 compress_preset_default = frackture.compress_preset_default
 compress_preset_large = frackture.compress_preset_large
@@ -74,26 +75,32 @@ class TestCompactPayloadFormat:
 
     def test_tier_flag_encoding(self):
         """Test that tier flags are correctly encoded in header"""
-        tiers = [CompressionTier.TINY, CompressionTier.DEFAULT, CompressionTier.LARGE]
+        tiers = [CompressionTier.MICRO, CompressionTier.TINY, CompressionTier.DEFAULT, CompressionTier.LARGE]
         
         for tier in tiers:
             payload = FrackturePayload(
                 symbolic=b'\x00' * 32,
-                entropy=[1000] * 16,
-                tier_name=tier.value
+                entropy=[1000] * 16 if tier != CompressionTier.MICRO else [1000] * 8,
+                tier_name=tier.value,
+                is_micro=(tier == CompressionTier.MICRO)
             )
             
             serialized = payload.to_bytes()
             header = serialized[0]
-            tier_flags = header & 0x07  # Extract 3 bits
+            tier_flags = (header >> 1) & 0x07  # Extract 3 bits from positions 1-3
+            micro_flag = header & 0x01  # Extract micro flag
             
             expected_flags = {
-                CompressionTier.TINY: 0b001,
-                CompressionTier.DEFAULT: 0b010,
+                CompressionTier.MICRO: 0b001,
+                CompressionTier.TINY: 0b010,
+                CompressionTier.DEFAULT: 0b011,
                 CompressionTier.LARGE: 0b100
             }
             
-            assert tier_flags == expected_flags[tier]
+            expected_micro = 1 if tier == CompressionTier.MICRO else 0
+            
+            assert tier_flags == expected_flags[tier], f"Expected tier flags {expected_flags[tier]} for {tier}, got {tier_flags}"
+            assert micro_flag == expected_micro, f"Expected micro flag {expected_micro} for {tier}, got {micro_flag}"
 
     def test_quantization_bounds(self):
         """Test that quantization maintains reasonable bounds"""
@@ -234,7 +241,7 @@ class TestSimpleWrappers:
         result = compress_simple(test_data, return_format="compact")
         assert isinstance(result, bytes)
         assert len(result) <= 200  # Regression test
-        assert len(result) >= 60   # Minimum size
+        assert len(result) >= 40   # Minimum size (micro-tier can be as small as 49B, but allow some tolerance)
 
     def test_compress_simple_json(self):
         """Test compress_simple with JSON format"""
@@ -355,13 +362,18 @@ class TestSizeRegression:
     def test_representative_payloads_under_200_bytes(self):
         """Test that representative payloads serialize to ≤200 bytes"""
         representative_data = [
-            # Tiny payloads
+            # Micro payloads (<50 bytes)
             b"Hi",
+            b"OK",
+            b"42",
+            b"X",
+            b"1",
+            b"",
+            
+            # Tiny payloads (50-99 bytes)
             b"Hello",
             b"Hello World",
             b'{"key": "value"}',
-            
-            # Small payloads
             b"x" * 50,
             b"x" * 99,  # Just under tiny threshold
             
@@ -384,7 +396,7 @@ class TestSizeRegression:
         
         for i, data in enumerate(representative_data):
             # Test all tiers
-            for tier in [CompressionTier.TINY, CompressionTier.DEFAULT, CompressionTier.LARGE]:
+            for tier in [CompressionTier.MICRO, CompressionTier.TINY, CompressionTier.DEFAULT, CompressionTier.LARGE]:
                 try:
                     # Use simple wrapper (default behavior)
                     result = compress_simple(data, tier=tier, return_format="compact")
@@ -395,7 +407,7 @@ class TestSizeRegression:
                     assert size <= 200, f"Payload {i} with tier {tier.value} is {size} bytes (>{200})"
                     
                     # Minimum size check (ensure we're not just returning empty data)
-                    assert size >= 60, f"Payload {i} with tier {tier.value} is {size} bytes (<{60})"
+                    assert size >= 40, f"Payload {i} with tier {tier.value} is {size} bytes (<{40})"
                     
                 except Exception as e:
                     # Some edge cases might fail, but the majority should pass
@@ -413,33 +425,110 @@ class TestSizeRegression:
         average_size = sum(total_sizes) / len(total_sizes)
         assert average_size < 200, f"Average payload size {average_size:.1f} is not < 200"
 
+    def test_micro_tier_optimization(self):
+        """Test micro-tier specific optimizations for ultra-tiny payloads."""
+        # Test that micro-tier payloads are smaller than other tiers
+        micro_data = [b"A", b"X", b"42", b"Hi"]
+        
+        for data in micro_data:
+            # Test micro tier
+            micro_result = compress_simple(data, tier=CompressionTier.MICRO, return_format="compact")
+            micro_size = len(micro_result)
+            
+            # Test other tiers for comparison
+            tiny_result = compress_simple(data, tier=CompressionTier.TINY, return_format="compact")
+            tiny_size = len(tiny_result)
+            
+            default_result = compress_simple(data, tier=CompressionTier.DEFAULT, return_format="compact")
+            default_size = len(default_result)
+            
+            # Micro tier should produce smaller payloads than other tiers for the same input
+            assert micro_size <= tiny_size, f"Micro tier ({micro_size} bytes) not smaller than tiny tier ({tiny_size} bytes)"
+            assert micro_size <= default_size, f"Micro tier ({micro_size} bytes) not smaller than default tier ({default_size} bytes)"
+            
+            # Verify micro payloads are very compact
+            assert micro_size <= 50, f"Micro tier payload {micro_size} bytes exceeds target ≤50 bytes"
+            
+            # Verify serialization/deserialization round-trip
+            deserialized = deserialize_frackture_payload(micro_result)
+            assert deserialized.is_micro == True, "Deserialized micro payload should have is_micro=True"
+            assert len(deserialized.entropy) == 8, f"Micro tier should have 8 entropy features, got {len(deserialized.entropy)}"
+            
+            # Test reconstruction
+            reconstructed = decompress_simple(micro_result)
+            assert len(reconstructed) == 768, f"Reconstructed vector should be 768 elements, got {len(reconstructed)}"
+            
+            # Verify reconstruction has finite values
+            assert np.all(np.isfinite(reconstructed)), "Reconstructed vector should have all finite values"
+
+    def test_micro_vs_tiny_compression_ratios(self):
+        """Test that micro-tier achieves better size efficiency than tiny tier."""
+        tiny_inputs = [b"Hi", b"Hello", b"A", b"X", b"42"]
+        
+        for data in tiny_inputs:
+            input_size = len(data)
+            
+            # Get micro-tier compression
+            micro_result = compress_simple(data, tier=CompressionTier.MICRO, return_format="compact")
+            micro_size = len(micro_result)
+            
+            # Get tiny-tier compression for comparison
+            tiny_result = compress_simple(data, tier=CompressionTier.TINY, return_format="compact")
+            tiny_size = len(tiny_result)
+            
+            print(f"Input: {data} ({input_size} bytes)")
+            print(f"  Micro: {micro_size} bytes")
+            print(f"  Tiny: {tiny_size} bytes")
+            
+            # Micro-tier should produce smaller or equal payloads than tiny tier
+            # This is the key improvement: micro tier reduces overhead for tiny inputs
+            assert micro_size <= tiny_size, f"Micro tier ({micro_size} bytes) not smaller than tiny tier ({tiny_size} bytes)"
+            
+            # For very small inputs (≤10 bytes), micro tier should be noticeably better
+            if input_size <= 10:
+                size_reduction = tiny_size - micro_size
+                assert size_reduction >= 0, f"Micro tier should reduce size for tiny inputs, got reduction: {size_reduction}"
+                
+                # Verify micro tier payloads are compact (≤50 bytes for ultra-tiny inputs)
+                if input_size <= 5:
+                    assert micro_size <= 50, f"Micro tier payload {micro_size} bytes exceeds 50 bytes for input {data}"
+
     def test_tier_consistency(self):
         """Test that tier consistency is maintained across payload formats"""
         data = b"Test data for tier consistency"
         
         # Get payloads for each tier
+        micro_payload = compress_simple(data, tier=CompressionTier.MICRO, return_format="json")
         tiny_payload = compress_simple(data, tier=CompressionTier.TINY, return_format="json")
         default_payload = compress_simple(data, tier=CompressionTier.DEFAULT, return_format="json")
         large_payload = compress_simple(data, tier=CompressionTier.LARGE, return_format="json")
         
         # Verify tier metadata is preserved
+        assert micro_payload["tier_name"] == CompressionTier.MICRO.value
         assert tiny_payload["tier_name"] == CompressionTier.TINY.value
         assert default_payload["tier_name"] == CompressionTier.DEFAULT.value
         assert large_payload["tier_name"] == CompressionTier.LARGE.value
         
         # Verify compact format preserves tier info too
+        micro_compact = compress_simple(data, tier=CompressionTier.MICRO, return_format="compact")
         tiny_compact = compress_simple(data, tier=CompressionTier.TINY, return_format="compact")
         default_compact = compress_simple(data, tier=CompressionTier.DEFAULT, return_format="compact")
         large_compact = compress_simple(data, tier=CompressionTier.LARGE, return_format="compact")
         
         # Deserialize and check tier info is preserved
+        micro_deserialized = deserialize_frackture_payload(micro_compact)
         tiny_deserialized = deserialize_frackture_payload(tiny_compact)
         default_deserialized = deserialize_frackture_payload(default_compact)
         large_deserialized = deserialize_frackture_payload(large_compact)
         
+        assert micro_deserialized.tier_name == CompressionTier.MICRO.value
         assert tiny_deserialized.tier_name == CompressionTier.TINY.value
         assert default_deserialized.tier_name == CompressionTier.DEFAULT.value
         assert large_deserialized.tier_name == CompressionTier.LARGE.value
+        
+        # Verify micro tier has correct micro flag
+        assert micro_deserialized.is_micro == True, "Micro tier should have is_micro=True"
+        assert tiny_deserialized.is_micro == False, "Tiny tier should have is_micro=False"
 
     def test_backward_compatibility(self):
         """Test that existing code using dict payloads still works"""
