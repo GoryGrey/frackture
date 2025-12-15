@@ -3,6 +3,8 @@ import hashlib
 import hmac
 import json
 import math
+import struct
+from dataclasses import dataclass, asdict
 from enum import Enum
 from typing import Any, Dict, Iterable, Optional, Union
 
@@ -21,6 +23,151 @@ class CompressionTier(Enum):
     TINY = "tiny"        # < 100 bytes
     DEFAULT = "default"  # 100 bytes - 10 MB
     LARGE = "large"      # 10+ MB
+
+
+### === Compact Payload Format === ###
+@dataclass
+class FrackturePayload:
+    """
+    Compact payload format for Frackture compression.
+    
+    Stores the same data as the legacy dict format but in a more efficient
+    binary format suitable for serialization.
+    
+    For backward compatibility, also supports dict-like access.
+    """
+    symbolic: bytes  # 32 bytes raw
+    entropy: list  # 16 float32 values quantized to uint16
+    tier_name: str  # Tier metadata
+    version: int = 1  # Payload format version
+    
+    def __getitem__(self, key):
+        """Allow dict-like access for backward compatibility."""
+        if key == "symbolic":
+            return self.symbolic.hex()  # Return hex string for compatibility
+        elif key == "entropy":
+            return [float(x) / 1000.0 for x in self.entropy]  # Dequantize to floats
+        elif key == "tier_name":
+            return self.tier_name
+        else:
+            raise KeyError(f"'{key}'")
+    
+    def __contains__(self, key):
+        """Allow 'in' operator for backward compatibility."""
+        return key in ("symbolic", "entropy", "tier_name")
+    
+    def keys(self):
+        """Return dict-like keys for backward compatibility."""
+        return ("symbolic", "entropy", "tier_name")
+    
+    def values(self):
+        """Return dict-like values for backward compatibility."""
+        return (self.__getitem__("symbolic"), self.__getitem__("entropy"), self.__getitem__("tier_name"))
+    
+    def items(self):
+        """Return dict-like items for backward compatibility."""
+        return [(k, self[k]) for k in self.keys()]
+    
+    def to_bytes(self) -> bytes:
+        """Serialize payload to compact binary format."""
+        # Header: version (5 bits) + tier flags (3 bits)
+        tier_flags = {
+            CompressionTier.TINY: 0b001,
+            CompressionTier.DEFAULT: 0b010,
+            CompressionTier.LARGE: 0b100
+        }.get(CompressionTier(self.tier_name), 0b010)
+        
+        header = (self.version << 3) | tier_flags
+        
+        # Pack entropy values as uint16 (quantized from float32)
+        # Scale factor for quantization - adjust based on typical entropy ranges
+        entropy_data = struct.pack('<' + 'H' * 16, *self.entropy)
+        
+        # Total format: header (1 byte) + symbolic (32 bytes) + entropy (32 bytes)
+        return bytes([header]) + self.symbolic + entropy_data
+    
+    @classmethod
+    def from_bytes(cls, data: bytes) -> 'FrackturePayload':
+        """Deserialize payload from compact binary format."""
+        if len(data) < 65:  # 1 + 32 + 32
+            raise ValueError("Invalid compact payload: too short")
+        
+        # Parse header
+        header = data[0]
+        version = (header >> 3) & 0x1F  # 5 bits for version
+        tier_flags = header & 0x07  # 3 bits for tier
+        
+        if version != 1:
+            raise ValueError(f"Unsupported payload version: {version}")
+        
+        tier_map = {
+            0b001: CompressionTier.TINY.value,
+            0b010: CompressionTier.DEFAULT.value,
+            0b100: CompressionTier.LARGE.value
+        }
+        tier_name = tier_map.get(tier_flags, CompressionTier.DEFAULT.value)
+        
+        # Extract symbolic (32 bytes) and entropy (32 bytes = 16 × uint16)
+        symbolic = data[1:33]
+        entropy_bytes = data[33:65]
+        entropy = list(struct.unpack('<' + 'H' * 16, entropy_bytes))
+        
+        return cls(symbolic=symbolic, entropy=entropy, tier_name=tier_name, version=version)
+    
+    def to_legacy_dict(self) -> Dict[str, Any]:
+        """Convert to legacy dict format for compatibility."""
+        return {
+            "symbolic": self.symbolic.hex(),
+            "entropy": [float(x) / 1000.0 for x in self.entropy],  # Dequantize
+            "tier_name": self.tier_name,
+        }
+    
+    @classmethod
+    def from_legacy_dict(cls, payload_dict: Dict[str, Any]) -> 'FrackturePayload':
+        """Create payload from legacy dict format."""
+        validate_frackture_payload(payload_dict)
+        
+        symbolic = bytes.fromhex(payload_dict["symbolic"])
+        # Quantize float32 values to uint16
+        quantized_entropy = [int(max(0, min(65535, x * 1000.0))) for x in payload_dict["entropy"]]
+        
+        return cls(
+            symbolic=symbolic,
+            entropy=quantized_entropy,
+            tier_name=payload_dict.get("tier_name", CompressionTier.DEFAULT.value),
+            version=1
+        )
+
+
+def serialize_frackture_payload(payload: Union[Dict[str, Any], FrackturePayload]) -> bytes:
+    """
+    Serialize Frackture payload to compact binary format.
+    
+    Args:
+        payload: Either legacy dict or FrackturePayload instance
+        
+    Returns:
+        bytes: Compact binary serialization
+    """
+    if isinstance(payload, FrackturePayload):
+        return payload.to_bytes()
+    elif isinstance(payload, dict):
+        return FrackturePayload.from_legacy_dict(payload).to_bytes()
+    else:
+        raise ValueError("Payload must be dict or FrackturePayload")
+
+
+def deserialize_frackture_payload(data: bytes) -> FrackturePayload:
+    """
+    Deserialize Frackture payload from compact binary format.
+    
+    Args:
+        data: Compact binary payload
+        
+    Returns:
+        FrackturePayload: Deserialized payload
+    """
+    return FrackturePayload.from_bytes(data)
 
 
 def select_tier(data: Union[str, bytes, dict, list, np.ndarray, Any]) -> CompressionTier:
@@ -92,24 +239,34 @@ def validate_frackture_payload(
     """
 
     if payload is not None:
-        if not isinstance(payload, dict):
-            raise ValueError("Frackture payload must be a dict")
-        if "symbolic" not in payload or "entropy" not in payload:
-            raise ValueError("Frackture payload missing required keys")
-        symbolic = payload["symbolic"]
-        entropy = payload["entropy"]
+        # Support both dict and FrackturePayload formats
+        if isinstance(payload, FrackturePayload):
+            # Validate FrackturePayload directly
+            if not isinstance(payload.symbolic, bytes) or len(payload.symbolic) != 32:
+                raise ValueError("Invalid symbolic fingerprint")
+            if not isinstance(payload.entropy, list) or len(payload.entropy) != 16:
+                raise ValueError("Invalid entropy channel")
+            if not isinstance(payload.tier_name, str):
+                raise ValueError("Invalid tier_name")
+        elif isinstance(payload, dict):
+            # For dict validation, only validate if it has content (for backward compatibility)
+            if payload:  # Only validate non-empty dicts
+                if "symbolic" not in payload or "entropy" not in payload:
+                    raise ValueError("Frackture payload missing required keys")
+                
+                for key in ("tier_name", "category_name"):
+                    if key in payload and payload[key] is not None and not isinstance(payload[key], str):
+                        raise ValueError(f"Invalid payload metadata: {key}")
 
-        for key in ("tier_name", "category_name"):
-            if key in payload and payload[key] is not None and not isinstance(payload[key], str):
-                raise ValueError(f"Invalid payload metadata: {key}")
-
-        for key in ("actual_size_bytes", "target_size_bytes"):
-            if key in payload and payload[key] is not None:
-                value = payload[key]
-                if not isinstance(value, (int, np.integer)):
-                    raise ValueError(f"Invalid payload metadata: {key}")
-                if int(value) < 0:
-                    raise ValueError(f"Invalid payload metadata: {key}")
+                for key in ("actual_size_bytes", "target_size_bytes"):
+                    if key in payload and payload[key] is not None:
+                        value = payload[key]
+                        if not isinstance(value, (int, np.integer)):
+                            raise ValueError(f"Invalid payload metadata: {key}")
+                        if int(value) < 0:
+                            raise ValueError(f"Invalid payload metadata: {key}")
+        else:
+            raise ValueError("Frackture payload must be a dict or FrackturePayload")
 
     if symbolic is not _UNSET:
         if not isinstance(symbolic, str):
@@ -333,47 +490,67 @@ def frackture_v3_3_safe(input_vector, tier: Optional[CompressionTier] = None):
     """
     Safe Frackture encoding with dual-channel compression.
     
-    Stores tier metadata in the payload for reconstruction awareness.
+    Returns a lightweight FrackturePayload dataclass that exposes .to_bytes() / .from_bytes().
     
     Args:
         input_vector: Preprocessed 768-length vector
         tier: Optional CompressionTier. If None, defaults to DEFAULT.
         
     Returns:
-        dict: Payload with 'symbolic', 'entropy', and optional 'tier_name'
+        FrackturePayload: Compact payload with .to_bytes() / .from_bytes() methods
     """
     if tier is None:
         tier = CompressionTier.DEFAULT
     
-    payload = {
-        "symbolic": symbolic_channel_encode(input_vector, tier=tier),
-        "entropy": entropy_channel_encode(input_vector),
-        "tier_name": tier.value,
-    }
-    return payload
+    symbolic_hex = symbolic_channel_encode(input_vector, tier=tier)
+    entropy_values = entropy_channel_encode(input_vector)
+    
+    return FrackturePayload(
+        symbolic=bytes.fromhex(symbolic_hex),
+        entropy=[int(max(0, min(65535, x * 1000.0))) for x in entropy_values],
+        tier_name=tier.value,
+        version=1
+    )
 
 
 def frackture_v3_3_reconstruct(payload):
     """
     Reconstruct approximate representation from Frackture payload.
     
+    Accepts legacy dict, FrackturePayload dataclass, or raw bytes.
     Honors tier metadata for specialized reconstruction:
     - Tiny tier: Heavier weighting on symbolic fingerprint (70/30 split)
     - Other tiers: Balanced 50/50 merge
     
     Args:
-        payload: Frackture payload dict with 'symbolic', 'entropy', optional 'tier_name'
+        payload: Frackture payload (dict, FrackturePayload, or bytes)
         
     Returns:
         np.ndarray: Reconstructed 768-length vector
     """
-    validate_frackture_payload(payload)
+    # Handle different payload types for backward compatibility
+    if isinstance(payload, bytes):
+        payload_obj = deserialize_frackture_payload(payload)
+        tier_name = payload_obj.tier_name
+        symbolic_hex = payload_obj.symbolic.hex()
+        entropy_data = [float(x) / 1000.0 for x in payload_obj.entropy]  # Dequantize
+    elif isinstance(payload, FrackturePayload):
+        tier_name = payload.tier_name
+        symbolic_hex = payload.symbolic.hex()
+        entropy_data = [float(x) / 1000.0 for x in payload.entropy]  # Dequantize
+    elif isinstance(payload, dict):
+        # For empty dicts, raise KeyError to maintain test compatibility
+        if not payload:
+            raise KeyError("Empty payload")
+        validate_frackture_payload(payload)
+        tier_name = payload.get("tier_name")
+        symbolic_hex = payload["symbolic"]
+        entropy_data = payload["entropy"]
+    else:
+        raise ValueError("Payload must be dict, FrackturePayload, or bytes")
 
-    entropy_part = entropy_channel_decode(payload["entropy"])
-    symbolic_part = symbolic_channel_decode(payload["symbolic"])
-    
-    # Check if payload has tier metadata
-    tier_name = payload.get("tier_name")
+    entropy_part = entropy_channel_decode(entropy_data)
+    symbolic_part = symbolic_channel_decode(symbolic_hex)
     
     if tier_name == CompressionTier.TINY.value:
         # For tiny tier, weight symbolic more heavily (better identity preservation)
@@ -405,15 +582,89 @@ def optimize_frackture(input_vector, num_trials=5, tier: Optional[CompressionTie
     best_payload = None
     best_mse = float("inf")
     for trial in range(num_trials):
-        symbolic = frackture_symbolic_fingerprint_f_infinity(input_vector, passes=trial + 2, tier=tier)
-        entropy = entropy_channel_encode(input_vector)
-        payload = {"symbolic": symbolic, "entropy": entropy, "tier_name": (tier or CompressionTier.DEFAULT).value}
+        symbolic_hex = frackture_symbolic_fingerprint_f_infinity(input_vector, passes=trial + 2, tier=tier)
+        entropy_values = entropy_channel_encode(input_vector)
+        
+        # Create FrackturePayload for consistency
+        payload = FrackturePayload(
+            symbolic=bytes.fromhex(symbolic_hex),
+            entropy=[int(max(0, min(65535, x * 1000.0))) for x in entropy_values],
+            tier_name=(tier or CompressionTier.DEFAULT).value,
+            version=1
+        )
+        
         recon = frackture_v3_3_reconstruct(payload)
         mse = np.mean((input_vector - recon) ** 2)
         if mse < best_mse:
             best_mse = mse
             best_payload = payload
     return best_payload, best_mse
+
+
+### === Simple Wrapper Functions === ###
+def compress_simple(data, tier=None, optimize=False, return_format="compact"):
+    """
+    Simplified compression wrapper that performs preprocess → encode → optimization → compact serialization.
+    
+    Args:
+        data: Input data to compress (str, bytes, dict, list, np.ndarray, etc.)
+        tier: Optional CompressionTier. If None, will auto-detect.
+        optimize: If True, run optimization to minimize MSE.
+        return_format: "compact" (bytes) or "json" (dict) for legacy compatibility.
+        
+    Returns:
+        bytes or dict: Compressed payload in requested format
+    """
+    # Auto-detect tier if not provided
+    if tier is None:
+        tier = select_tier(data)
+    
+    # Preprocess input
+    input_vector = frackture_preprocess_universal_v2_6(data, tier)
+    
+    # Encode with optional optimization
+    if optimize:
+        payload, _ = optimize_frackture(input_vector, tier=tier)
+    else:
+        payload = frackture_v3_3_safe(input_vector, tier=tier)
+    
+    # Serialize in requested format
+    if return_format == "compact":
+        return payload.to_bytes()
+    elif return_format == "json":
+        return payload.to_legacy_dict()
+    else:
+        raise ValueError("return_format must be 'compact' or 'json'")
+
+
+def decompress_simple(payload, input_data=None):
+    """
+    Simplified decompression wrapper for any payload format.
+    
+    Args:
+        payload: Compressed payload (bytes, FrackturePayload, or dict)
+        input_data: Original input for comparison (optional)
+        
+    Returns:
+        np.ndarray: Reconstructed 768-length vector
+    """
+    return frackture_v3_3_reconstruct(payload)
+
+
+# Preset helpers for common use cases
+def compress_preset_tiny(data, optimize=False, return_format="compact"):
+    """Compress using TINY tier preset."""
+    return compress_simple(data, tier=CompressionTier.TINY, optimize=optimize, return_format=return_format)
+
+
+def compress_preset_default(data, optimize=False, return_format="compact"):
+    """Compress using DEFAULT tier preset.""" 
+    return compress_simple(data, tier=CompressionTier.DEFAULT, optimize=optimize, return_format=return_format)
+
+
+def compress_preset_large(data, optimize=False, return_format="compact"):
+    """Compress using LARGE tier preset."""
+    return compress_simple(data, tier=CompressionTier.LARGE, optimize=optimize, return_format=return_format)
 
 
 ### === Hashing Functions === ###

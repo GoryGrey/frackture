@@ -110,9 +110,9 @@ class TestTinyTier:
         # Encode with auto-detected tier
         payload = frackture_v3_3_safe(preprocessed, tier=tier)
         
-        # Should have tier_name='tiny'
-        assert "tier_name" in payload
-        assert payload["tier_name"] == "tiny"
+        # Should have tier_name='tiny' (FrackturePayload format)
+        assert hasattr(payload, 'tier_name')
+        assert payload.tier_name == "tiny"
     
     def test_tiny_manual_tier_override(self):
         """Test that tier can be manually overridden"""
@@ -122,8 +122,9 @@ class TestTinyTier:
         preprocessed = frackture_preprocess_universal_v2_6(data, tier=CompressionTier.DEFAULT)
         payload = frackture_v3_3_safe(preprocessed, tier=CompressionTier.DEFAULT)
         
-        # Should have tier_name='default'
-        assert payload["tier_name"] == "default"
+        # Should have tier_name='default' (FrackturePayload format)
+        assert hasattr(payload, 'tier_name')
+        assert payload.tier_name == "default"
     
     def test_tiny_reconstruction_stability(self):
         """Test that reconstruction produces stable, valid output for tiny inputs"""
@@ -157,8 +158,8 @@ class TestTinyTier:
         default_payload = frackture_v3_3_safe(default_preprocessed, tier=CompressionTier.DEFAULT)
         
         # Symbolic fingerprints should differ (different processing)
-        assert tiny_payload["symbolic"] != default_payload["symbolic"]
+        assert tiny_payload.symbolic != default_payload.symbolic
         
-        # But both should be valid 64-char hex
-        assert len(tiny_payload["symbolic"]) == 64
-        assert len(default_payload["symbolic"]) == 64
+        # But both should be valid 64-char hex (when converted to hex)
+        assert len(tiny_payload.symbolic.hex()) == 64
+        assert len(default_payload.symbolic.hex()) == 64

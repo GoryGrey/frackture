@@ -222,11 +222,17 @@ class TestRoundTrip:
         preprocessed = frackture_preprocess_universal_v2_6(test_data)
         payload = frackture_v3_3_safe(preprocessed)
         
-        # Check payload structure
-        assert isinstance(payload, dict)
-        assert "symbolic" in payload
-        assert "entropy" in payload
-        assert len(payload) == 2
+        # Check payload structure (now returns FrackturePayload)
+        assert hasattr(payload, 'symbolic')
+        assert hasattr(payload, 'entropy')
+        assert hasattr(payload, 'tier_name')
+        
+        # Also verify it can be converted to dict for compatibility
+        if hasattr(payload, 'to_legacy_dict'):
+            dict_payload = payload.to_legacy_dict()
+            assert isinstance(dict_payload, dict)
+            assert "symbolic" in dict_payload
+            assert "entropy" in dict_payload
         
         # Check symbolic fingerprint format
         assert isinstance(payload["symbolic"], str)
@@ -481,7 +487,7 @@ class TestFailurePaths:
         """Test reconstruction with empty payload"""
         empty_payload = {}
         
-        with pytest.raises(KeyError):
+        with pytest.raises(ValueError):
             frackture_v3_3_reconstruct(empty_payload)
     
     def test_none_payload_reconstruction(self):
