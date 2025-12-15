@@ -404,14 +404,28 @@ def frackture_symbolic_fingerprint_f_infinity(input_vector, passes=4, tier: Opti
         passes = 2
     
     bits = (input_vector * 255).astype(np.uint8)
-    mask = np.array([(i**2 + i * 3 + 1) % 256 for i in range(len(bits))], dtype=np.uint8)
+    
+    # Create data-dependent mask for better collision resistance
+    # Combine static index-based mask with hash of the data itself
+    static_mask = np.array([(i**2 + i * 3 + 1) % 256 for i in range(len(bits))], dtype=np.uint8)
+    data_hash = hashlib.sha256(bits.tobytes()).digest()
+    hash_mask = np.frombuffer(data_hash, dtype=np.uint8)
+    # Tile hash mask to match input length
+    hash_mask_extended = np.tile(hash_mask, (len(bits) // len(hash_mask)) + 1)[:len(bits)]
+    # Combine masks for stronger dependency on input data
+    mask = (static_mask ^ hash_mask_extended).astype(np.uint8)
+    
     for p in range(passes):
         rotated = np.roll(bits ^ mask, p * 17)
         entropy_mixed = (rotated * ((p + 1) ** 2)).astype(np.uint16) % 256
         chunks = np.array_split(entropy_mixed, 32)
         folded = [np.bitwise_xor.reduce(chunk) for chunk in chunks]
         fingerprint = "".join(f"{x:02x}" for x in folded)
-        bits = (entropy_mixed + folded[p % len(folded)]) % 256
+        # Better mixing: combine rotated, entropy_mixed, and folded results
+        fold_array = np.array(folded, dtype=np.uint8)
+        # Redistribute folded values across the whole array
+        fold_expanded = np.tile(fold_array, (len(bits) // len(fold_array)) + 1)[:len(bits)]
+        bits = (entropy_mixed ^ fold_expanded ^ np.roll(rotated, p * 23)).astype(np.uint8)
     return fingerprint
 
 
@@ -539,9 +553,9 @@ def frackture_v3_3_reconstruct(payload):
         symbolic_hex = payload.symbolic.hex()
         entropy_data = [float(x) / 1000.0 for x in payload.entropy]  # Dequantize
     elif isinstance(payload, dict):
-        # For empty dicts, raise KeyError to maintain test compatibility
+        # For empty dicts, raise ValueError for consistent error handling
         if not payload:
-            raise KeyError("Empty payload")
+            raise ValueError("Empty payload")
         validate_frackture_payload(payload)
         tier_name = payload.get("tier_name")
         symbolic_hex = payload["symbolic"]
